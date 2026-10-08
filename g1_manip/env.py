@@ -47,6 +47,12 @@ def _load_g1_spec() -> mujoco.MjSpec:
         for joint in pelvis.find_all(mujoco.mjtObj.mjOBJ_JOINT):
             joint.actgravcomp = True
 
+    # 右手先サイト（手のひら表面の中心。x = 指の向き、z = 手のひらの法線）
+    g1.body(config.RIGHT_PALM_BODY).add_site(
+        name=config.RIGHT_PALM_SITE, pos=config.RIGHT_PALM_POS, quat=config.RIGHT_PALM_QUAT,
+        size=[0.01, 0.01, 0.01], rgba=[0.1, 0.4, 1.0, 1.0], group=4,
+    )
+
     # 頭部カメラ: 頭部メッシュは torso_link に付いているので、torso_link にカメラを追加する。
     # MuJoCo のカメラは -z 方向を向く（x: 画像の右、y: 画像の上）。
     p = np.deg2rad(config.HEAD_CAMERA_PITCH_DEG)
@@ -86,6 +92,22 @@ def reset_to_home(model: mujoco.MjModel, data: mujoco.MjData) -> None:
         jid = model.actuator_trnid[i, 0]
         data.ctrl[i] = data.qpos[model.jnt_qposadr[jid]]
     mujoco.mj_forward(model, data)
+
+
+def reset_to_ready(model: mujoco.MjModel, data: mujoco.MjData, ik) -> None:
+    """ホーム姿勢にリセットしたうえで、右腕を準備姿勢（READY_PALM_POS、手のひら下向き）に置く。
+
+    右腕の関節角は IK（g1_manip.ik.RightHandIK）で求め、qpos と位置アクチュエータの目標の両方に入れる。
+    IK の状態もこの姿勢に合わせる（姿勢正則化の基準も準備姿勢になる）。
+    """
+    reset_to_home(model, data)
+    ik.reset(data.qpos)
+    arm_q = ik.solve(config.READY_PALM_POS)
+    arm_qpos = joint_qpos_ids(model, config.RIGHT_ARM_JOINTS)
+    data.qpos[arm_qpos] = arm_q
+    data.ctrl[joint_actuator_ids(model, config.RIGHT_ARM_JOINTS)] = arm_q
+    mujoco.mj_forward(model, data)
+    ik.reset(data.qpos)
 
 
 def joint_qpos_ids(model: mujoco.MjModel, joint_names: list[str]) -> np.ndarray:
