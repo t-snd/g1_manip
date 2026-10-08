@@ -32,6 +32,21 @@ def _load_g1_spec() -> mujoco.MjSpec:
         g1.delete(g1.joint(name))
     g1.delete(g1.joint(config.FREEJOINT_NAME))
 
+    # 指のアクチュエータを低ゲインにする（明示的な kv は biasprm[2] に負値で入れる）
+    for act in g1.actuators:
+        if "_hand_" in act.target:
+            act.gainprm[0] = config.FINGER_KP
+            act.biasprm[1] = -config.FINGER_KP
+            act.biasprm[2] = -config.FINGER_KV
+
+    # 重力補償: 全ボディに gravcomp を付け、補償力を各関節のアクチュエータ経由で加える
+    if config.GRAVITY_COMPENSATION:
+        pelvis = g1.body("pelvis")
+        for body in [pelvis] + list(pelvis.find_all(mujoco.mjtObj.mjOBJ_BODY)):
+            body.gravcomp = 1.0
+        for joint in pelvis.find_all(mujoco.mjtObj.mjOBJ_JOINT):
+            joint.actgravcomp = True
+
     # 頭部カメラ: 頭部メッシュは torso_link に付いているので、torso_link にカメラを追加する。
     # MuJoCo のカメラは -z 方向を向く（x: 画像の右、y: 画像の上）。
     p = np.deg2rad(config.HEAD_CAMERA_PITCH_DEG)

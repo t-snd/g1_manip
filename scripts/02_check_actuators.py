@@ -5,8 +5,9 @@
 
 テスト内容（制御は 50Hz、行動＝関節の目標角度（絶対値））:
   1. 右肘の目標角を正弦波で動かし、追従誤差を測る
-  2. 右腕7関節・右手7関節すべてにステップ目標を与え、定常誤差を測る（その後ホームに戻す）。
-     目標は14関節すべてで互いに異なり、ホームからも離れているので、アクチュエータの取り違えも検出できる
+  2. 右腕7関節・右手7関節すべてを目標姿勢へ min-jerk 補間で動かし、オーバーシュートと定常誤差を測る
+     （その後ホームに戻す）。目標は14関節すべてで互いに異なり、ホームからも離れているので、
+     アクチュエータの取り違えも検出できる
   3. 上記の間、制御対象外の左腕・左手が整定後のホーム姿勢から動かないことを確認する
      （脚・腰は関節ごと削除済みなので、関節が存在しないことを確認する）
 テストのパラメータと合格しきい値は config.py（TEST_* / TRACK_* / IDLE_MAX_DEV）にある。
@@ -139,25 +140,56 @@ def run_tests(model, data, sync=None) -> bool:
                              f"<->{model.geom(c.geom2).name or model.body(b2).name}")
         return sorted(set(names))
 
+    # トルク飽和の計測用：各制御関節の dof と力の上限（重力補償分も含む qfrc_actuator と比べる）
+    ctrl_dof = model.jnt_dofadr[model.actuator_trnid[ctrl_ids, 0]]
+    frc_lim = np.where(model.jnt_actfrclimited[model.actuator_trnid[ctrl_ids, 0]].astype(bool),
+                       model.jnt_actfrcrange[model.actuator_trnid[ctrl_ids, 0], 1], np.inf)
+
     step_results = []
     env_contacts = []
+    n_ramp = int(config.TEST_STEP_RAMP / DT)
+    start = home
     for label, target in (("step", step_target(model, home)), ("home", home)):
-        for _ in range(int(config.TEST_STEP_HOLD / DT)):
-            tracked_step(target)
-        step_results.append((label, target, np.abs(data.qpos[ctrl_q] - target)))
+        peak_progress = np.zeros(len(target))
+        n_sat = np.zeros(len(target))
+        n_phys = 0
+        for k in range(int(config.TEST_STEP_HOLD / DT)):
+            s = min(1.0, (k + 1) / n_ramp)
+            s = 10 * s ** 3 - 15 * s ** 4 + 6 * s ** 5  # min-jerk
+            apply_joint_targets(model, data, ctrl_ids, start + s * (target - start))
+            # step_control と同じだが、トルク飽和を物理ステップごとに数えるため1ステップずつ進める
+            for _ in range(config.N_SUBSTEPS):
+                mujoco.mj_step(model, data)
+                n_sat += np.abs(data.qfrc_actuator[ctrl_dof]) >= frc_lim - 1e-6
+                n_phys += 1
+            if sync is not None:
+                sync()
+            idle_dev = max(idle_dev, np.abs(data.qpos[idle_q] - idle_home).max())
+            peak_progress = np.maximum(peak_progress, (data.qpos[ctrl_q] - start) / (target - start))
+        overshoot = np.clip(peak_progress - 1.0, 0.0, None)
+        step_results.append((label, target, np.abs(data.qpos[ctrl_q] - target), overshoot, n_sat / n_phys))
         env_contacts += robot_env_contacts()
+        start = target
 
     # --- 結果 ---
     print(f"\n[1] 右肘 正弦波: 中心 {config.TEST_SINE_CENTER} rad, 振幅 {config.TEST_SINE_AMP} rad, "
           f"{config.TEST_SINE_HZ} Hz, {config.TEST_SINE_SECONDS} 秒")
     print(f"    追従誤差（{config.TEST_SINE_SKIP} 秒以降）: 最大 {sine_err.max():.4f} rad, "
           f"RMS {np.sqrt((sine_err ** 2).mean()):.4f} rad")
-    print(f"\n[2] ステップ目標（{config.TEST_STEP_HOLD} 秒保持後の誤差 [rad]）")
-    print(f"    {'joint':<28} {'ホーム':>8} {'目標(step)':>10} {'誤差(step)':>10} {'誤差(home)':>10}")
+    print(f"\n[2] 目標姿勢への移動（min-jerk {config.TEST_STEP_RAMP} 秒＋保持、計 {config.TEST_STEP_HOLD} 秒）"
+          f"の誤差 [rad] とオーバーシュート [移動量比 %]")
+    print(f"    {'joint':<28} {'ホーム':>8} {'目標':>8} {'誤差':>8} {'行過ぎ%':>7} {'飽和%':>6} "
+          f"{'戻り誤差':>8} {'行過ぎ%':>7} {'飽和%':>6}")
     for k, name in enumerate(config.CONTROLLED_JOINTS):
-        print(f"    {name:<28} {home[k]:>+8.3f} {step_results[0][1][k]:>+10.3f} {step_results[0][2][k]:>10.4f} "
-              f"{step_results[1][2][k]:>10.4f}")
+        (_, tgt, err_s, ov_s, sat_s), (_, _, err_h, ov_h, sat_h) = step_results
+        print(f"    {name:<28} {home[k]:>+8.3f} {tgt[k]:>+8.3f} {err_s[k]:>8.4f} {ov_s[k] * 100:>7.1f} "
+              f"{sat_s[k] * 100:>6.1f} {err_h[k]:>8.4f} {ov_h[k] * 100:>7.1f} {sat_h[k] * 100:>6.1f}")
     step_max = max(r[2].max() for r in step_results)
+    overshoot_max = max(r[3].max() for r in step_results)
+    # 飽和の合否は指だけで判定する（指の低ゲイン化の回帰検出）。腕は kp=500 のままなので、
+    # 手首（上限 5Nm）は 50Hz の目標更新直後に数 ms 飽和することがあり、表に参考として出すだけにする。
+    n_arm = len(config.RIGHT_ARM_JOINTS)
+    saturation_max = max(r[4][n_arm:].max() for r in step_results)
     removed_present = [j for j in config.REMOVED_JOINTS
                        if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, j) != -1]
     print(f"\n[3] 制御対象外: 左腕・左手の、整定後のホーム姿勢からの最大ずれ {idle_dev:.5f} rad"
@@ -165,9 +197,13 @@ def run_tests(model, data, sync=None) -> bool:
 
     checks = {
         f"右肘が正弦波に追従 (最大誤差 < {config.TRACK_SINE_MAX_ERR} rad)": sine_err.max() < config.TRACK_SINE_MAX_ERR,
-        f"右腕・右手がステップ目標に追従 (定常誤差 < {config.TRACK_STEP_SS_ERR} rad)":
+        f"右腕・右手が目標姿勢に追従 (定常誤差 < {config.TRACK_STEP_SS_ERR} rad)":
             step_max < config.TRACK_STEP_SS_ERR,
-        f"ステップ計測時にロボットが環境と接触していない {env_contacts if env_contacts else ''}": not env_contacts,
+        f"目標姿勢への移動のオーバーシュートが小さい (< {config.TRACK_OVERSHOOT_MAX * 100:.0f}%)":
+            overshoot_max < config.TRACK_OVERSHOOT_MAX,
+        f"移動中に指がトルク上限へ張り付かない (時間割合 < {config.TRACK_SATURATION_MAX * 100:.0f}%)":
+            saturation_max < config.TRACK_SATURATION_MAX,
+        f"計測時にロボットが環境と接触していない {env_contacts if env_contacts else ''}": not env_contacts,
         f"左腕・左手が静止 (ずれ < {config.IDLE_MAX_DEV} rad)": idle_dev < config.IDLE_MAX_DEV,
         "脚・腰の関節が無い（ワールドに固定）": not removed_present,
     }
