@@ -1,7 +1,9 @@
-.venv/
+.venv
 __pycache__/
 *.pyc
-third_party/
+third_party
+.claude/
 data/
 outputs/
 *.mp4
+MUJOCO_LOG.TXT

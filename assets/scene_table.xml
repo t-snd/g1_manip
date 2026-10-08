@@ -1,0 +1,59 @@
+<!--
+  机・キューブ・目標マーカー・床・ライトの環境定義。
+  G1 本体はここには含めず、g1_manip/env.py の build_spec() で
+  mujoco_menagerie の g1_with_hands.xml を MjSpec で読み込み、
+  骨盤 freejoint と脚・腰の関節を削除したうえでこのシーンに attach する。
+
+  座標系: G1 の骨盤直下が原点、+x が G1 の正面、+z が上。
+-->
+<mujoco model="g1_table_scene">
+  <compiler angle="radian"/>
+
+  <!-- timestep は config.SIM_TIMESTEP と一致させる。把持の安定性のため elliptic cone + impratio を使う -->
+  <option timestep="0.002" integrator="implicitfast" cone="elliptic" impratio="10"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="160" elevation="-25" offwidth="1280" offheight="960"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="table" rgba="0.55 0.4 0.28 1"/>
+    <material name="table_leg" rgba="0.3 0.3 0.3 1"/>
+    <material name="cube" rgba="0.85 0.15 0.15 1"/>
+    <material name="target" rgba="0.1 0.8 0.2 0.4"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0.5 0 3.0" dir="0 0 -1" directional="true"/>
+    <light pos="1.5 -1.0 2.5" dir="-0.6 0.4 -0.7" diffuse="0.3 0.3 0.3"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+
+    <!-- 机: 幅(y) 0.8m × 奥行(x) 0.5m、天板上面 z=0.85m、手前の縁 x=0.15m -->
+    <body name="table" pos="0.40 0 0">
+      <geom name="table_top" type="box" size="0.25 0.40 0.02" pos="0 0 0.83" material="table"
+        friction="1 0.005 0.0001"/>
+      <geom name="table_leg_fl" type="box" size="0.02 0.02 0.405" pos="-0.22 0.37 0.405" material="table_leg"/>
+      <geom name="table_leg_fr" type="box" size="0.02 0.02 0.405" pos="-0.22 -0.37 0.405" material="table_leg"/>
+      <geom name="table_leg_bl" type="box" size="0.02 0.02 0.405" pos="0.22 0.37 0.405" material="table_leg"/>
+      <geom name="table_leg_br" type="box" size="0.02 0.02 0.405" pos="0.22 -0.37 0.405" material="table_leg"/>
+    </body>
+
+    <!-- キューブ: 一辺 4.5cm、質量 75g、摩擦高め。初期位置は机上（天板上面 + 半辺） -->
+    <body name="cube" pos="0.30 -0.15 0.8725">
+      <freejoint name="cube_freejoint"/>
+      <geom name="cube" type="box" size="0.0225 0.0225 0.0225" mass="0.075" material="cube"
+        friction="1.5 0.005 0.0001" condim="4"/>
+    </body>
+
+    <!-- 目標マーカー: 衝突なしの半透明円盤。mocap ボディなので data.mocap_pos で動かす -->
+    <body name="target" mocap="true" pos="0.30 0 0.8505">
+      <geom name="target" type="cylinder" size="0.04 0.0005" material="target" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>
