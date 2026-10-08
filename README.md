@@ -59,11 +59,28 @@ python -c "import mujoco, mink, lerobot"
 .venv/bin/python scripts/01_view_scene.py --headless 5   # ビューアなしで 5 秒動かし、静止を自動チェック
 ```
 
+## アクチュエータと行動（フェーズ3）
+
+- menagerie の G1 はアクチュエータが全て**位置型**（kp=500, dampratio=1, ctrlrange＝関節可動域）なので、
+  PD 制御の自作や置き換えは不要。**行動＝関節の目標角度（絶対値）[rad]** をそのまま `ctrl` に入れる。
+- 制御対象は `config.CONTROLLED_JOINTS`（右腕7関節 `RIGHT_ARM_JOINTS` ＋ 右手7関節 `RIGHT_HAND_JOINTS`、計14次元）。
+  この並びが state/action ベクトルの次元順になる。
+- インデックスは `env.joint_qpos_ids` / `env.joint_actuator_ids` で関節名から引き、
+  目標の適用は `env.apply_joint_targets`、制御1周期（50Hz）の前進は `env.step_control` を使う。
+
+```bash
+.venv/bin/python scripts/02_check_actuators.py          # 一覧表示＋追従テスト（合否判定、失敗時は終了コード 1）
+.venv/bin/mjpython scripts/02_check_actuators.py --view # 同じテストをビューアで表示
+```
+
 ### 後続フェーズへの申し送り（フェーズ2の検証で判明）
 
 - 右手はアクチュエータの順（index→middle）と qpos の順（middle→index）が異なる。state/action は必ず関節名で引く。
 - x=0.40 付近は右腕の到達限界に近い（フェーズ4で到達しにくければ、キューブ基準 x や範囲を調整する）。手首の yaw は固定しない。
 - ホーム姿勢では手が机より下にある。フェーズ5の approach の前に、手を机より上に上げる中継点を入れる。
+  （フェーズ3で確認：ホームから腕を前に出すだけだと、手首が天板の下に引っかかって止まる。）
+- ホーム姿勢（腕を下ろした状態）のまま指を開閉すると、指が固定された脚（hip リンク）に当たる。指の開閉は腕を体から離してから行う。
+- 位置制御（kp=500）は重力で数 mrad 定常的にたわむので、静止時でも state（関節角）と action（目標角）は数 mrad ずれる。
 - 成功判定は xy 距離で行うか、目標マーカーの z（天板上面）にキューブの半辺を足して比べる。
 - キューブと目標の範囲が y=-0.05 で接しているので、初期配置に最小距離の制約を入れる。
 - 机やランダム化範囲を変えたら、頭部カメラの視野（`HEAD_CAMERA_YAW_DEG` / `PITCH_DEG`）を再確認する。

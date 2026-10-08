@@ -1,6 +1,6 @@
-"""シーンの読み込み・リセット。
+"""シーンの読み込み・リセット・関節目標の適用。
 
-観測取得・行動適用・成功判定はフェーズ3以降でここに追加する。
+観測取得・成功判定はフェーズ4以降でここに追加する。
 """
 
 import mujoco
@@ -71,6 +71,37 @@ def reset_to_home(model: mujoco.MjModel, data: mujoco.MjData) -> None:
         jid = model.actuator_trnid[i, 0]
         data.ctrl[i] = data.qpos[model.jnt_qposadr[jid]]
     mujoco.mj_forward(model, data)
+
+
+def joint_qpos_ids(model: mujoco.MjModel, joint_names: list[str]) -> np.ndarray:
+    """関節名の並びに対応する qpos のインデックス（1自由度の関節のみ）。"""
+    return np.array([model.joint(n).qposadr[0] for n in joint_names])
+
+
+def joint_actuator_ids(model: mujoco.MjModel, joint_names: list[str]) -> np.ndarray:
+    """関節名の並びに対応する（その関節を駆動する）アクチュエータのインデックス。"""
+    by_joint: dict[int, int] = {}
+    for i in range(model.nu):
+        if model.actuator_trntype[i] != mujoco.mjtTrn.mjTRN_JOINT:
+            continue
+        jid = model.actuator_trnid[i, 0]
+        if jid in by_joint:
+            raise ValueError(f"関節 {model.joint(jid).name} を駆動するアクチュエータが複数ある")
+        by_joint[jid] = i
+    return np.array([by_joint[model.joint(n).id] for n in joint_names])
+
+
+def apply_joint_targets(model: mujoco.MjModel, data: mujoco.MjData,
+                        actuator_ids: np.ndarray, q_target: np.ndarray) -> None:
+    """関節の目標角度（絶対値）を位置アクチュエータの ctrl に設定する（ctrlrange があればクリップ）。"""
+    lo, hi = model.actuator_ctrlrange[actuator_ids].T
+    limited = model.actuator_ctrllimited[actuator_ids].astype(bool)
+    data.ctrl[actuator_ids] = np.where(limited, np.clip(q_target, lo, hi), q_target)
+
+
+def step_control(model: mujoco.MjModel, data: mujoco.MjData) -> None:
+    """制御1周期（1/CONTROL_HZ 秒）分だけ物理シミュレーションを進める。"""
+    mujoco.mj_step(model, data, nstep=config.N_SUBSTEPS)
 
 
 def load_model() -> tuple[mujoco.MjModel, mujoco.MjData]:
