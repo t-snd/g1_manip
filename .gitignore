@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 third_party
 .claude/
-data/
+/data
 outputs/
 *.mp4
 MUJOCO_LOG.TXT

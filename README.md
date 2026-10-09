@@ -109,6 +109,49 @@ python -c "import mujoco, mink, lerobot"
 .venv/bin/mjpython scripts/03_ik_reach_test.py --view # ビューアで表示
 ```
 
+## スクリプト方策とデモ生成（フェーズ5）
+
+計画書 5-b に従い、まず**リーチングタスク**（準備姿勢から机の上のランダムな点へ手のひらを持っていく）でフェーズ5〜7を通す。
+
+- `env.ReachEnv`：リセット（準備姿勢、目標点をランダムに決めて目標マーカーで表示、キューブは机の奥の隅へ）、観測、行動の適用（50Hz）、成功判定。
+  - 開始時の手のひら位置も準備姿勢から ±3cm（高さ ±2cm）ずらす（IK で腕の関節角を求める）。初期状態が毎回同じだと、
+    評価時に observation.state の配線を間違えても結果に表れにくいため。
+  - 目標点：x 0.20〜0.40m、y −0.25〜+0.05m、天板上 7〜15cm。成功：最終ステップで手のひらが目標点から 2cm 以内かつ静止。
+- `scripted.ScriptedReachPolicy`：手のひらを目標点へ min-jerk 補間（1.5 秒）で動かし、50Hz ごとに IK で右腕の目標角を出す。指はホームの目標のまま。1エピソード 150 ステップ（3 秒）。
+- 保存形式（LeRobot v3.0、`dataset.py`）：
+
+  | キー | 中身 | 次元 |
+  |---|---|---|
+  | `observation.state` | 右腕7関節＋右手7関節の関節角（`CONTROLLED_JOINTS` の順） | 14 |
+  | `observation.environment_state` | 目標点の位置（リーチング） | 3 |
+  | `action` | そのステップで位置制御に与えた目標角（絶対値） | 14 |
+  | `task` | "reach the target point with the right palm" | — |
+
+  - 成功したエピソードだけ保存する。使った乱数シードは `<root>/g1_generation.json` に記録する（評価は別のシード `EVAL_SEED_BASE` 以降を使う）。
+  - `meta/stats.json` の std に下限 0.01 を付けている（`STATS_STD_FLOOR`）。リーチングでは指がほぼ動かず std が 1e-6 程度になり、
+    LeRobot の正規化（÷(std+1e-8)）で評価時のわずかなずれが数十〜数百倍に拡大されるのを防ぐため。学習は `meta/stats.json` を使う。
+    下限は `meta/stats.json` にだけ入る（`meta/episodes/` のエピソードごとの統計は元のまま）。lerobot のツールでエピソードの
+    削除・分割・統合をして統計を作り直した場合は、`dataset.apply_std_floor` を再実行すること。
+- リプレイ検証（保存形式のバグ検出）：保存したデータを読み込み、同じ初期状態から保存した action だけで再生して、
+  タスク成功・全フレームで関節角が保存した `observation.state` と一致・`environment_state` が一致、を確認する。
+  - 成功判定（2cm）は方策の精度（約 0.1cm）より緩いので、成功判定だけでは保存形式のバグを検出できない。**検証の本体は一致判定**。
+    action を1ステップずらす・state と取り違える・腕の action を 0.95 倍する・environment_state をずらす、といったバグは一致判定で NG になることを確認済み。
+  - リーチングでは指がほぼ動かないので、指の列（index/middle）の取り違えは検出できない（ピック＆プレースで指が動けば検出できる）。
+- 結果（リーチング）：スクリプト方策の成功率 100%。50 本・200 本ともリプレイ検証は全エピソード成功、関節角の差 0。
+  データは `data/g1_reach_50`、`data/g1_reach_200`（git 管理外）。
+- `lerobot-train` で状態のみ（画像なし）の ACT が学習できることも確認済み（CPU で 20 ステップのスモークテスト）。
+  学習済みモデルは `ACTPolicy.from_pretrained` ＋ `make_pre_post_processors` で読み込み、`ReachEnv` の観測 dict をそのまま渡して
+  `select_action` できる（CPU・MPS で確認）。エピソード開始ごとに `policy.reset()` が必要。
+- フェーズ7への申し送り：ACT の既定は chunk_size = n_action_steps = 100 なので、150 ステップのエピソードでは推論が実質2回だけになる。
+  観測の配線ミスを見つけやすくするため、評価では n_action_steps を小さくした条件でも試す。
+
+```bash
+.venv/bin/python scripts/04_scripted_demo.py --episodes 20            # スクリプト方策の成功率（保存なし）
+.venv/bin/mjpython scripts/04_scripted_demo.py --view --episodes 3    # ビューアで表示
+.venv/bin/python scripts/05_generate_dataset.py --task reach --num-episodes 200 --overwrite  # 生成＋リプレイ検証
+.venv/bin/python scripts/05_generate_dataset.py --task reach --num-episodes 200 --replay-only  # リプレイ検証だけ
+```
+
 ### 後続フェーズへの申し送り（フェーズ2の検証で判明）
 
 - 右手はアクチュエータの順（index→middle）と qpos の順（middle→index）が異なる。state/action は必ず関節名で引く。

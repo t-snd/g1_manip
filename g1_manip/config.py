@@ -198,3 +198,36 @@ TEST_STEP_RAMP = 0.5  # [s] min-jerk 補間の時間
 # （アクチュエータの取り違えがあれば必ず誤差として現れる）。腕は机に当たらないよう後ろ・外側へ動かす。
 TEST_STEP_ARM_DELTA = [0.30, -0.30, 0.25, -0.35, 0.40, 0.20, -0.30]  # RIGHT_ARM_JOINTS の順、ホームからの差 [rad]
 TEST_STEP_HAND_FRACTION = [0.65, 0.35, 0.25, 0.40, 0.45, 0.80, 0.75]  # RIGHT_HAND_JOINTS の順、可動域内の位置 (0〜1)
+
+# ---------------------------------------------------------------------------
+# フェーズ5 タスク・データ生成
+# ---------------------------------------------------------------------------
+FPS = CONTROL_HZ
+SUCCESS_SPEED_TOL = 0.02  # [m/s] 「静止」とみなす速さ（手のひら・キューブ）
+
+# --- リーチングタスク（パイプライン検証用）---
+# 準備姿勢から、机の上の箱の中のランダムな点へ手のひらを持っていく（手のひら下向き）。
+REACH_TASK_NAME = "reach the target point with the right palm"
+REACH_GOAL_X = (0.20, 0.40)  # [m] 目標点の範囲（キューブの範囲と目標マーカーの範囲を合わせた範囲）
+REACH_GOAL_Y = (-0.25, 0.05)
+REACH_GOAL_Z = (0.07, 0.15)  # [m] 天板上面からの高さ
+REACH_EPISODE_STEPS = 150  # 3 秒
+REACH_SCRIPT_MOVE_TIME = 1.5  # [s] スクリプト方策が目標点へ移動する時間（min-jerk）
+REACH_SUCCESS_TOL = 0.02  # [m] 最終ステップで手のひらが目標点からこの距離以内なら成功
+REACH_ENV_STATE_NAMES = ["goal_x", "goal_y", "goal_z"]
+# エピソード開始時の手のひら位置を準備姿勢（READY_PALM_POS）から ± この範囲でずらす（IK で腕の関節角を求める）。
+# 初期状態が毎回同じだと、評価時に observation.state の配線を間違えても結果に表れにくいため。
+READY_PALM_RANDOM = (0.03, 0.03, 0.02)  # [m]
+
+# --- データ生成 ---
+DATA_DIR = PROJECT_ROOT / "data"
+GEN_SEED_BASE = 0  # データ生成のエピソード i の乱数シード = GEN_SEED_BASE + i
+GEN_MAX_ATTEMPTS_FACTOR = 3  # 試行数の上限 = 保存する本数 × これ（足りなければエラー終了）
+# リプレイ検証の許容差。成功判定（2cm）は方策の精度（約 0.1cm）より緩く、保存形式のバグを検出できないので、
+# 関節角・environment_state の一致判定が検証の本体になる。
+REPLAY_STATE_TOL = 1e-3  # [rad]
+REPLAY_ENV_STATE_TOL = 1e-5
+EVAL_SEED_BASE = 100_000  # 評価用（学習データと重ならないシード）
+# 正規化統計（meta/stats.json）の std の下限。ほぼ動かない次元（リーチング中の指など）で
+# 正規化後の値が爆発しないようにする（関節角 0.01rad ≈ 0.6°、位置 1cm）。
+STATS_STD_FLOOR = 0.01

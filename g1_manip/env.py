@@ -1,6 +1,7 @@
-"""シーンの読み込み・リセット・関節目標の適用。
+"""シーンの読み込み・リセット・観測取得・行動適用・成功判定。
 
-観測取得・成功判定はフェーズ4以降でここに追加する。
+下の関数群（load_model / reset_to_* / joint_* / apply_joint_targets / step_control）が基本部品で、
+タスク単位の環境は ReachEnv（フェーズ5のリーチング）にまとめている。
 """
 
 import mujoco
@@ -156,3 +157,81 @@ def load_model() -> tuple[mujoco.MjModel, mujoco.MjData]:
     reset_to_home(model, data)
     assert np.isclose(model.opt.timestep, config.SIM_TIMESTEP), "scene_table.xml の timestep と config が不一致"
     return model, data
+
+
+class ReachEnv:
+    """リーチングタスク: 準備姿勢から、机の上のランダムな点へ右手のひらを持っていく。
+
+    観測:
+      observation.state             CONTROLLED_JOINTS の関節角（14）
+      observation.environment_state 目標点の位置（3）
+    行動: CONTROLLED_JOINTS の目標角（絶対値、14）
+    """
+
+    task_name = config.REACH_TASK_NAME
+
+    def __init__(self):
+        from g1_manip.ik import RightHandIK  # リセット時の準備姿勢を求めるときだけ使う
+
+        self.model, self.data = load_model()
+        m = self.model
+        self.state_qpos = joint_qpos_ids(m, config.CONTROLLED_JOINTS)
+        self.action_act = joint_actuator_ids(m, config.CONTROLLED_JOINTS)
+        self.palm_site = m.site(config.RIGHT_PALM_SITE).id
+        self.target_mocap = m.body(config.TARGET_BODY).mocapid[0]
+        self.cube_qpos = m.joint(config.CUBE_JOINT).qposadr[0]
+        top = m.geom(config.TABLE_TOP_GEOM)
+        self.table_top_z = float(self.data.geom_xpos[top.id][2] + top.size[2])
+
+        # 準備姿勢の qpos を一度だけ IK で求めておく。リセット時はここから、ずらした手のひら位置へ IK で合わせる。
+        self.ik = RightHandIK(m)
+        reset_to_ready(m, self.data, self.ik)
+        self.ready_qpos = self.data.qpos.copy()
+        self.ready_ctrl = self.data.ctrl.copy()
+        self.arm_qpos = joint_qpos_ids(m, config.RIGHT_ARM_JOINTS)
+        self.arm_act = joint_actuator_ids(m, config.RIGHT_ARM_JOINTS)
+        self.goal = np.zeros(3)
+
+    def reset(self, seed: int) -> dict:
+        """準備姿勢（手のひら位置をランダムにずらす）に戻し、目標点をランダムに決める。
+        キューブは手の届かない机の奥の隅に置く。"""
+        rng = np.random.default_rng(seed)
+        mujoco.mj_resetData(self.model, self.data)
+        self.data.qpos[:] = self.ready_qpos
+        self.data.ctrl[:] = self.ready_ctrl
+        start = np.asarray(config.READY_PALM_POS) + rng.uniform(-1, 1, 3) * np.asarray(config.READY_PALM_RANDOM)
+        self.ik.reset(self.ready_qpos)
+        arm_q = self.ik.solve(start)
+        self.data.qpos[self.arm_qpos] = arm_q
+        self.data.ctrl[self.arm_act] = arm_q
+        self.data.qpos[self.cube_qpos:self.cube_qpos + 2] = config.REACH_CUBE_PARK_XY
+        self.goal = np.array([rng.uniform(*config.REACH_GOAL_X), rng.uniform(*config.REACH_GOAL_Y),
+                              self.table_top_z + rng.uniform(*config.REACH_GOAL_Z)])
+        self.data.mocap_pos[self.target_mocap] = self.goal  # 目標マーカーを目標点に表示する
+        mujoco.mj_forward(self.model, self.data)
+        return self.observation()
+
+    def observation(self) -> dict:
+        return {
+            "observation.state": self.data.qpos[self.state_qpos].astype(np.float32),
+            "observation.environment_state": self.goal.astype(np.float32),
+        }
+
+    def step(self, action: np.ndarray) -> dict:
+        """行動（関節目標角）を適用し、制御1周期だけ進める。"""
+        apply_joint_targets(self.model, self.data, self.action_act, np.asarray(action, dtype=float))
+        step_control(self.model, self.data)
+        return self.observation()
+
+    def palm_pos(self) -> np.ndarray:
+        return self.data.site_xpos[self.palm_site].copy()
+
+    def palm_speed(self) -> float:
+        vel = np.zeros(6)
+        mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_SITE, self.palm_site, vel, 0)
+        return float(np.linalg.norm(vel[3:]))
+
+    def is_success(self) -> bool:
+        """手のひらが目標点から REACH_SUCCESS_TOL 以内で、ほぼ静止している。"""
+        return (np.linalg.norm(self.palm_pos() - self.goal) <= config.REACH_SUCCESS_TOL
+                and self.palm_speed() <= config.SUCCESS_SPEED_TOL)
