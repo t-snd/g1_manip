@@ -169,6 +169,39 @@ python -c "import mujoco, mink, lerobot"
 - キューブと目標の範囲が y=-0.05 で接しているので、初期配置に最小距離の制約を入れる。
 - 机やランダム化範囲を変えたら、頭部カメラの視野（`HEAD_CAMERA_YAW_DEG` / `PITCH_DEG`）を再確認する。
 
+## ACT 学習（フェーズ6, Colab）
+
+1. データセットを Hugging Face Hub の **private** リポジトリへ上げる（Mac）：
+
+   ```bash
+   .venv/bin/hf auth login                                                # write 権限のトークン
+   .venv/bin/python scripts/05b_push_dataset.py --repo-id sanada331/g1_reach   # 既定で data/g1_reach_200 を上げる
+   ```
+
+   push 後に Hub 上で private になっていることを確認し、public なら異常終了する。
+2. Colab で `notebooks/train_act_colab.ipynb` を開く（ランタイムは T4 GPU、鍵アイコンのシークレットに `HF_TOKEN` を登録）。
+   **トークンはノートブックに書かない**（このリポジトリは public）。
+3. 上から順に実行する。学習の出力は Drive の `MyDrive/g1_act/runs/<RUN_NAME>/`、ログは `MyDrive/g1_act/logs/` に置く。
+   切断されたら手順 1〜5 を実行してから手順 7（再開）。最後に手順 9 で `pretrained_model` を zip にしてダウンロードし、
+   Mac の `outputs/<RUN_NAME>/pretrained_model/` に展開する。
+
+- 学習は `lerobot-train` をラッパー（ノートブック内で `/content/train_act.py` に書き出す）経由で動かす：
+  - Drive のマウント先ではシンボリックリンクを作れない場合があるので、`checkpoints/last` の作成に失敗しても止めず、
+    `checkpoints/last_step.txt` に記録する。再開は `train_config.json` のパスを直接指定するので `last` は使わない。
+  - ログの `step:10K` は丸められているので、正確なステップ数 `step_exact:<n>` を先頭に付ける（loss 曲線用）。
+- 既定の設定：ACT の既定値（chunk_size = n_action_steps = 100、lr 1e-5、kl_weight 10）、50,000 ステップ、batch 64、
+  5,000 ステップごとに保存、AMP（`policy.use_amp=true`。CUDA の autocast の既定は float16 なので T4 で動く）。
+- 再開は、保存が最後まで終わっている最新のチェックポイントから行う。lerobot は `training_step.json` を先に、約 300MB の
+  `optimizer_state.safetensors` と `optimizer_param_groups.json` を最後に書くので、ファイルの有無ではなく
+  safetensors のヘッダとファイルサイズの一致・JSON が読めるかで判定する（保存の途中で切れたものは飛ばす）。
+- チェックポイント 1 個は約 460MB（`pretrained_model` 154MB ＋ `training_state` 307MB）。既定の設定で Drive を約 4.6GB 使う。
+- Mac 上で Colab をまねた環境（Drive を一時フォルダに、CUDA を CPU に置き換え、少ないステップ数）を作り、ノートブックを最初から最後まで
+  実行して確認済み：Hub の private データセット取得、学習、`last` のリンク作成に失敗した場合の続行、保存途中のチェックポイントを
+  飛ばした再開（optimizer の保存途中で切れた状態を模擬）、loss 曲線、zip 書き出し、書き出したモデル（CPU で学習したもの）の
+  Mac での読み込みと `select_action`。GPU（T4・float16）での実行は未確認。
+- フェーズ7への申し送り：Colab で学習したモデルの `policy_preprocessor.json` には `device: cuda` が入る。Mac で読み込むときは
+  `make_pre_post_processors(..., preprocessor_overrides={"device_processor": {"device": "mps"}})` のように上書きが必要になる見込み。
+
 ## 実行上の注意（macOS）
 
 `mujoco.viewer.launch_passive` は macOS では `python` ではなく **`mjpython`** で実行する必要がある。
