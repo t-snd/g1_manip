@@ -180,6 +180,7 @@ python -c "import mujoco, mink, lerobot"
 
    push 後に Hub 上で private になっていることを確認し、public なら異常終了する。
 2. Colab で `notebooks/train_act_colab.ipynb` を開く（ランタイムは T4 GPU、鍵アイコンのシークレットに `HF_TOKEN` を登録）。
+   W&B で可視化するなら `WANDB_API_KEY` も登録する（使わないなら手順 2 で `USE_WANDB = False`）。
    **トークンはノートブックに書かない**（このリポジトリは public）。
 3. 上から順に実行する。学習の出力は Drive の `MyDrive/g1_act/runs/<RUN_NAME>/`、ログは `MyDrive/g1_act/logs/` に置く。
    切断されたら手順 1〜5 を実行してから手順 7（再開）。最後に手順 9 で `pretrained_model` を zip にしてダウンロードし、
@@ -189,6 +190,16 @@ python -c "import mujoco, mink, lerobot"
   - Drive のマウント先ではシンボリックリンクを作れない場合があるので、`checkpoints/last` の作成に失敗しても止めず、
     `checkpoints/last_step.txt` に記録する。再開は `train_config.json` のパスを直接指定するので `last` は使わない。
   - ログの `step:10K` は丸められているので、正確なステップ数 `step_exact:<n>` を先頭に付ける（loss 曲線用）。
+- Colab に元から入っている `diffusers` は、同じく元から入っている古い `torchao` と合わず import に失敗する
+  （`cannot import name 'FqnToConfig' from 'torchao.quantization'`）。lerobot は `diffusers` があると GR00T などの他のポリシーの
+  コードで import するので ACT の学習も起動しない。手順 3 で `diffusers` をアンインストールする（ACT は diffusers を使わない。
+  Mac の環境にも無い）。
+- W&B（`USE_WANDB = True`、project `g1_act`）：`wandb.disable_artifact=true` でチェックポイントは W&B に上げない。
+  lerobot は W&B の run ID をチェックポイントの `train_config.json` に保存するので、手順 7 の再開でも同じ run に続けて記録される
+  （`wandb/latest-run` のシンボリックリンクが Drive 上で作れなくても困らない）。ただし最後の保存から切断までの区間は、
+  W&B では切断前の値が残る（step が戻るログは捨てられる）。
+- W&B を有効にすると学習の開始時に `RUN_DIR/wandb` が作られるので、最初のチェックポイントより前に落ちたときは
+  Drive の `RUN_DIR` を削除するか `RUN_NAME` を変えてから手順 6 をやり直す。
 - 既定の設定：ACT の既定値（chunk_size = n_action_steps = 100、lr 1e-5、kl_weight 10）、50,000 ステップ、batch 64、
   5,000 ステップごとに保存、AMP（`policy.use_amp=true`。CUDA の autocast の既定は float16 なので T4 で動く）。
 - 再開は、保存が最後まで終わっている最新のチェックポイントから行う。lerobot は `training_step.json` を先に、約 300MB の
@@ -199,6 +210,8 @@ python -c "import mujoco, mink, lerobot"
   実行して確認済み：Hub の private データセット取得、学習、`last` のリンク作成に失敗した場合の続行、保存途中のチェックポイントを
   飛ばした再開（optimizer の保存途中で切れた状態を模擬）、loss 曲線、zip 書き出し、書き出したモデル（CPU で学習したもの）の
   Mac での読み込みと `select_action`。GPU（T4・float16）での実行は未確認。
+- W&B 対応は、ノートブックのラッパーを Mac で直接実行して確認した（ノートブック全体ではない）：オフラインモードで学習 →
+  `wandb/latest-run` を消して途中のチェックポイントから再開 → 同じ run ID で続く。オンラインでの送信は未確認。
 - フェーズ7への申し送り：Colab で学習したモデルの `policy_preprocessor.json` には `device: cuda` が入る。Mac で読み込むときは
   `make_pre_post_processors(..., preprocessor_overrides={"device_processor": {"device": "mps"}})` のように上書きが必要になる見込み。
 
