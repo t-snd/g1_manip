@@ -4,6 +4,6 @@ __pycache__/
 third_party
 .claude/
 /data
-outputs/
+outputs
 *.mp4
 MUJOCO_LOG.TXT

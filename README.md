@@ -215,6 +215,59 @@ python -c "import mujoco, mink, lerobot"
 - フェーズ7への申し送り：Colab で学習したモデルの `policy_preprocessor.json` には `device: cuda` が入る。Mac で読み込むときは
   `make_pre_post_processors(..., preprocessor_overrides={"device_processor": {"device": "mps"}})` のように上書きが必要になる見込み。
 
+## 評価（フェーズ7, Mac）
+
+Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を `scripts/06_eval_policy.py` でシミュレーション上で動かし、成功率を出す。
+
+```bash
+.venv/bin/python scripts/06_eval_policy.py                                  # 既定: outputs/act_g1_reach_v1/pretrained_model、50 エピソード
+.venv/bin/python scripts/06_eval_policy.py --temporal-ensemble 0.01         # 毎ステップ予測して重ねて平均する（ACT 論文の係数）
+.venv/bin/python scripts/06_eval_policy.py --n-action-steps 10              # チャンクのうち 10 個だけ実行して予測し直す（下の結果を参照）
+.venv/bin/python scripts/06_eval_policy.py --episodes 5 --video outputs/eval_reach.mp4
+.venv/bin/mjpython scripts/06_eval_policy.py --view --episodes 3
+```
+
+- 読み込みは `ACTPolicy.from_pretrained` ＋ `make_pre_post_processors`。Colab で学習したモデルは前処理の device が `cuda` なので、
+  `preprocessor_overrides={"device_processor": {"device": ...}}` で推論するデバイスに上書きする。device は既定で MPS（無ければ CPU、`--device cpu` も可）。
+- 50Hz で「観測 → 前処理（正規化）→ `select_action` → 後処理（逆正規化）→ 関節目標に適用 → 制御 1 周期」を繰り返す。
+  エピソード開始ごとに `policy.reset()` で行動チャンクのキューを空にする。成功判定はデータ生成と同じ `ReachEnv.is_success()`
+  （最終ステップで手のひらが目標点から 2cm 以内かつ静止）。
+- 評価のシードは `EVAL_SEED_BASE`（100000）以降。実行前に次を確かめる：
+  - モデルの入力キー・次元が環境の観測と一致する（一致しなければ終了）
+  - モデルの正規化統計が学習データ（既定 `data/g1_reach_200`）の `meta/stats.json` と一致し、std の下限 0.01 が効いている
+  - 評価のシードが学習データの生成に使ったシード（成功・失敗とも）と重ならない
+  - 学習データの最初のエピソードと同じシードでリセットした観測が、保存した frame 0 と一致する（関節の並び順の照合。
+    形と統計の照合だけでは並び順の取り違えを検出できないため。関節を 1 組入れ替えると NG になることを確認済み）。
+    これが NG のときは環境側の配線が学習時と違い、評価結果に意味が無いので終了する
+- 結果はモデルのフォルダの隣に `eval_<task>_<条件>_<N>ep.json` として保存する（エピソードごとの最終誤差・速さ・行動の跳び・推論時間）。
+  「行動の跳び」は制御ステップ間の右腕の目標角の変化の最大で、チャンクの切り替わりでのカクつきの目安。
+- 成功率が `EVAL_MIN_SUCCESS_RATE`（90%）以上なら終了コード 0、未満なら 1（入出力の不一致などで途中終了したときも 1）。
+- **environment_state は正規化されていない**：lerobot 0.6.1 の ACT の既定の `normalization_mapping` は VISUAL・STATE・ACTION だけで
+  ENV が無いため、目標点の座標は生の値（m 単位、`g1_reach_200` での std は 2.4〜8.3cm）のまま入る。学習時も評価時も同じ処理なので食い違いではないが、
+  成功率が低いときは、`--policy.normalization_mapping='{"VISUAL":"MEAN_STD","STATE":"MEAN_STD","ENV":"MEAN_STD","ACTION":"MEAN_STD"}'`
+  を付けて学習し直すことを検討する。
+- 結果（`act_g1_reach_v1`：Colab の T4 で 40,000 ステップ学習したチェックポイント。50,000 ステップの予定が 41,062 ステップで
+  ランタイムが切れたが、loss は 30K〜40K でほぼ横ばい（l1_loss 0.025→0.023）だったので 40,000 で評価した。評価のシード 100000〜100049）：
+
+  | 推論の条件 | 成功率 | 最終誤差 平均 / 最大 | 行動の跳び 最大 | 推論 平均 |
+  |---|---|---|---|---|
+  | 既定（n_action_steps 100：2 秒ごとに予測） | **50/50 = 100%** | 0.42 / 1.55cm | 0.070rad | 1.5ms/ステップ |
+  | temporal ensembling（係数 0.01、毎ステップ予測） | **50/50 = 100%** | 0.48 / 1.54cm | 0.031rad | 15.5ms/ステップ |
+  | n_action_steps 10 | 43/50 = 86% | 2.28 / 22.38cm | 0.074rad | 2.3ms/ステップ |
+  | n_action_steps 1 | 23/50 = 46% | 7.69 / 24.69cm | 0.124rad | 12.7ms/ステップ |
+
+  - 既定の条件で計画書の目安（90%）を満たした。MPS と CPU で同じ結果（verifier が確認）。
+  - temporal ensembling は行動の跳びが半分以下になる（チャンクの切り替わりのカクつきが減る）。
+  - 予測し直す間隔を短くすると成功率が下がる。n_action_steps 10 の失敗（7 件）は最終ステップでもまだ動いていて（0.016〜0.031m/s）
+    到着が遅れ、n_action_steps 1 の失敗（27 件）はほとんど（26 件）が目標の手前で止まっている（最終の速さ ≈ 0）。
+    観測は関節角と目標点だけで速度も時刻も無いため、途中から予測し直すと「動き出し」の行動（ほぼ現在の姿勢）を出して
+    遅れたり止まったりすると考えられる（推測）。temporal ensembling は過去のチャンクの予測も平均するので、この問題が起きない。
+  - 既定の条件の 6 エピソード（18 秒）の録画：`outputs/act_g1_reach_v1/eval_reach_n100.mp4`（git 管理外）。
+- 動作確認：上の実モデルでの評価のほか、Colab のモデルをまねて device を cuda にした試験用モデル（4 ステップだけ学習したもの）で、
+  MPS・CPU での読み込みと実行、`--n-action-steps`・`--temporal-ensemble`・`--video`（H.264, 640×480, 50fps）、
+  前処理の正規化と後処理の逆正規化が `meta/stats.json` からの手計算と一致すること、学習データが違うモデル（50 本で学習）で
+  統計の照合が NG になることを確認した。`--view`（ビューア）は未確認。
+
 ## 実行上の注意（macOS）
 
 `mujoco.viewer.launch_passive` は macOS では `python` ではなく **`mjpython`** で実行する必要がある。

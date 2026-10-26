@@ -231,3 +231,19 @@ EVAL_SEED_BASE = 100_000  # 評価用（学習データと重ならないシー�
 # 正規化統計（meta/stats.json）の std の下限。ほぼ動かない次元（リーチング中の指など）で
 # 正規化後の値が爆発しないようにする（関節角 0.01rad ≈ 0.6°、位置 1cm）。
 STATS_STD_FLOOR = 0.01
+
+# ---------------------------------------------------------------------------
+# フェーズ7 評価（scripts/06_eval_policy.py）
+# ---------------------------------------------------------------------------
+OUTPUTS_DIR = PROJECT_ROOT / "outputs"  # 学習済みモデル・評価結果・動画（git 管理外）
+EVAL_POLICY_DIR = OUTPUTS_DIR / "act_g1_reach_v1" / "pretrained_model"  # Colab の手順 9 で持ってきたモデル
+EVAL_DATASET_DIR = DATA_DIR / "g1_reach_200"  # 学習に使ったデータ（正規化統計とシードの照合用）
+EVAL_EPISODES = 50
+EVAL_MIN_SUCCESS_RATE = 0.90  # 計画書の目安（リーチング 90% 以上）
+EVAL_STATS_TOL = 1e-5  # モデルの正規化統計と meta/stats.json の一致判定
+# 動画（mujoco.Renderer）。机の向こう側（ロボットの左前）の斜め上から、ロボットと作業領域を見る
+VIDEO_WIDTH, VIDEO_HEIGHT = 640, 480
+VIDEO_LOOKAT = (0.30, -0.10, 0.95)
+VIDEO_DISTANCE = 1.3
+VIDEO_AZIMUTH = -150.0  # [deg]
+VIDEO_ELEVATION = -25.0  # [deg]
