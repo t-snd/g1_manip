@@ -204,8 +204,8 @@ python -c "import mujoco, mink, lerobot"
 - 成功：最終ステップでキューブ中心が目標から xy で 3cm 以内、机の上に平らに置かれ（高さが天板＋半辺から ±1cm）、静止し、手が離れている。
 - 保存形式はリーチングと同じキー。`observation.environment_state` は キューブの位置(3) ＋ 姿勢 quat(4, wxyz, w ≥ 0) ＋ 目標の位置(3, z は天板上面) の 10 次元。
   - 目標の z（一定）と親指の thumb_0（一定）は std が 0 なので、std の下限 0.01 が付く。
-  - フェーズ6への申し送り：ACT の既定では environment_state は正規化されない（フェーズ7の項を参照）。キューブの quat や目標の位置の
-    値の幅が小さいので、ピック＆プレースの学習では `normalization_mapping` に ENV を足すことを検討する。
+  - ACT の既定では environment_state は正規化されない（フェーズ7の項を参照）。キューブの quat や目標の位置の
+    値の幅が小さいので、ピック＆プレースの学習では `normalization_mapping` に ENV を足した（フェーズ6の「ピック＆プレース」を参照）。
 - 結果：データ生成（シード 0〜200）は試行 201 回で成功 200 本（成功率 99.5%。失敗の 1 本は届く手の向きの候補が無い配置）、
   別のシード 1000〜1199 では 199/200（失敗は同じ理由の 1 本）。腕の行動の 1 ステップの変化は全エピソードで 0.05rad 以下。
   `data/g1_pick_50`・`data/g1_pick_200`（約 9 万フレーム）のリプレイ検証は全エピソード成功、関節角・environment_state の差 0。
@@ -262,6 +262,30 @@ python -c "import mujoco, mink, lerobot"
   `wandb/latest-run` を消して途中のチェックポイントから再開 → 同じ run ID で続く。オンラインでの送信は未確認。
 - フェーズ7への申し送り：Colab で学習したモデルの `policy_preprocessor.json` には `device: cuda` が入る。Mac で読み込むときは
   `make_pre_post_processors(..., preprocessor_overrides={"device_processor": {"device": "mps"}})` のように上書きが必要になる見込み。
+
+### ピック＆プレース
+
+```bash
+.venv/bin/python scripts/05b_push_dataset.py --root data/g1_pick_200 --repo-id sanada331/g1_pick
+```
+
+Colab では `notebooks/train_act_pick_colab.ipynb` を使う（手順はリーチング版と同じ。学習の設定も同じで 50,000 ステップ、batch 64）。違いは次の 3 点：
+
+- データセット `sanada331/g1_pick`（private、200 本・9 万フレーム、`environment_state` 10 次元）、`RUN_NAME = "act_g1_pick_v1"`。
+- **`environment_state` も正規化する**：`--policy.normalization_mapping='{"VISUAL":"MEAN_STD","STATE":"MEAN_STD","ENV":"MEAN_STD","ACTION":"MEAN_STD"}'`。
+  lerobot 0.6.1 の ACT の既定の `normalization_mapping` には ENV が無く、`environment_state` はそのまま入る（リーチングのモデルはそうなっている）。
+  ピック＆プレースでは値の幅（std 0.01〜0.17）に比べて平均（キューブの z 0.90、quat の w 0.98 など）が大きいので正規化する。
+  Mac で短い学習を回し、保存した `config.json`・`train_config.json` に ENV が入り、前処理で `environment_state` が
+  (x − 平均) / std になること、再開後も設定が残ることを確かめた。手順 9 でも書き出すモデルの設定を表示して確かめる。
+- **データ読み込みの高速化**（ラッパーの `G1_FAST_DATA=1`、手順 2 で設定）：lerobot は 1 サンプルごとに HF datasets（Arrow）から
+  現在の行と 100 ステップ分の行動を引くので遅く、リーチングの T4 での学習では 1 ステップ 0.54 秒のうち 0.40 秒がデータ待ち（`data_s`）だった。
+  ラッパーは `DatasetReader.get_item` を差し替え、全列を最初に torch のテンソルへ読み込んで（9 万行で約 17MB、0.01 秒）同じ値を添字で取り出す
+  （行動の範囲外はエピソード端の値で埋めて `action_is_pad` を立てる、元の実装と同じ処理）。
+  - Mac で確かめたこと：`g1_pick_200` の全 9 万サンプル（`delta_timestamps` は ACT と同じ行動 100 ステップ）と `g1_reach_200` の
+    約 3,600 サンプルで、元の実装と全キーの値・dtype・形が一致。1 サンプル 約 3.4ms → 約 0.04ms。CPU での 20 ステップの学習で、ログした 5 ステップごとの
+    高速化あり・なしの loss が一致（同じシードで同じバッチになる）。
+  - 動画・画像のあるデータセット、エピソードを絞り込んだ読み込み、画像変換があるとき、float32・int64・bool のスカラーか長さの揃った 1 次元リスト以外の列があるときは、自動で元の実装を使う。
+  - T4 での速さは未確認。ログの `data_s` が `updt_s` よりずっと小さくなっていれば効いている。
 
 ## 評価（フェーズ7, Mac）
 
