@@ -13,21 +13,35 @@ from g1_manip import config
 
 
 class RightHandIK:
-    def __init__(self, model: mujoco.MjModel):
+    def __init__(self, model: mujoco.MjModel, orientation_cost=config.IK_ORIENTATION_COST,
+                 avoid_body_collision: bool = False):
+        """orientation_cost: 手のひらサイト座標系の (x, y, z) 軸まわりの姿勢コスト。既定は法線まわり（yaw）が自由。
+        avoid_body_collision: 右腕（肩 yaw〜手首）と胴体・骨盤の衝突を避ける制約を入れる（物理側で前腕が胴体に
+        当たって目標に届かないのを防ぐ。ピック＆プレースの横からの把持で使う）。
+        """
         self.model = model
         self.configuration = mink.Configuration(model)
+        self.ori_mask = np.asarray(orientation_cost) > 0
 
         self.hand_task = mink.FrameTask(
             frame_name=config.RIGHT_PALM_SITE,
             frame_type="site",
             position_cost=config.IK_POSITION_COST,
-            orientation_cost=config.IK_ORIENTATION_COST,
+            orientation_cost=orientation_cost,
             lm_damping=config.IK_FRAME_LM_DAMPING,
         )
         # 右腕を基準姿勢（reset 時の姿勢）付近に保つ弱い正則化。冗長自由度（肘の位置など）を安定させる。
         self.posture_task = mink.PostureTask(model, cost=config.IK_POSTURE_COST)
         self.tasks = [self.hand_task, self.posture_task]
         self.limits = [mink.ConfigurationLimit(model)]
+        if avoid_body_collision:
+            def collision_geoms(bodies):  # 衝突判定用のジオメトリ（menagerie の G1 は group 3）
+                return [g for g in range(model.ngeom)
+                        if model.body(model.geom_bodyid[g]).name in bodies and model.geom_group[g] == 3]
+            self.limits.append(mink.CollisionAvoidanceLimit(
+                model, [(collision_geoms(config.IK_COLLISION_ARM_BODIES), collision_geoms(config.IK_COLLISION_BODY_BODIES))],
+                minimum_distance_from_collisions=config.IK_COLLISION_MIN_DIST,
+                collision_detection_distance=config.IK_COLLISION_DETECT_DIST))
 
         # 右腕7関節以外（左腕・両手の指・キューブ）は IK では動かさない（等式制約で厳密に固定）。
         arm_dofs = {model.jnt_dofadr[model.joint(j).id] for j in config.RIGHT_ARM_JOINTS}
@@ -53,15 +67,14 @@ class RightHandIK:
     def errors(self) -> tuple[float, float]:
         """手先タスクの (位置誤差 [m], 姿勢誤差 [rad])。姿勢誤差はコストを付けた軸だけで測る。"""
         err = self.hand_task.compute_error(self.configuration)
-        ori_mask = np.asarray(config.IK_ORIENTATION_COST) > 0
-        return float(np.linalg.norm(err[:3])), float(np.linalg.norm(err[3:][ori_mask]))
+        return float(np.linalg.norm(err[:3])), float(np.linalg.norm(err[3:][self.ori_mask]))
 
     def solve(self, target_pos, target_quat=config.PALM_DOWN_QUAT,
               max_iters: int = config.IK_MAX_ITERS) -> np.ndarray:
         """手のひらサイトの目標 (位置, 姿勢 quat wxyz) に対する右腕7関節の目標角を返す。
 
-        注意: IK_ORIENTATION_COST の z 成分が 0 のため、target_quat のうち手のひらの法線まわりの回転
-        （yaw）は無視され、傾き（法線の向き）だけが合わせられる。
+        注意: 既定の姿勢コスト（IK_ORIENTATION_COST）は z 成分が 0 のため、target_quat のうち手のひらの
+        法線まわりの回転（yaw）は無視され、傾き（法線の向き）だけが合わせられる。
 
         前回の解から反復する（ウォームスタート）。誤差が許容値に入るか、反復の更新が十分小さくなったら
         打ち切る。収束しなくても最後の解を返すので、誤差は errors() で確認すること。

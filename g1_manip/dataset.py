@@ -76,7 +76,7 @@ def read_generation_info(root: Path) -> dict:
 
 def load_episodes(root: Path, repo_id: str) -> list[dict[str, np.ndarray]]:
     """保存したデータセットを読み込み、エピソードごとに {キー: (T, dim) 配列} の dict のリストで返す。"""
-    ds = LeRobotDataset(repo_id, root=root)
+    ds = LeRobotDataset(repo_id, root=root, video_backend="pyav")  # 動画は無い。既定の torchcodec は FFmpeg が無いと長い警告を出す
     keys = ["observation.state", "observation.environment_state", "action"]
     episodes: dict[int, dict[str, list]] = {}
     for i in range(len(ds)):

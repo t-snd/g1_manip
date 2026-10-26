@@ -3,6 +3,7 @@
     python scripts/05_generate_dataset.py --task reach --num-episodes 50
     python scripts/05_generate_dataset.py --task reach --num-episodes 200 --overwrite
     python scripts/05_generate_dataset.py --task reach --num-episodes 50 --replay-only   # 既存データのリプレイ検証だけ
+    python scripts/05_generate_dataset.py --task pick --num-episodes 200                 # ピック＆プレース
 
 - 成功したエピソードだけを保存し、試行数と成功率をログに出す
 - エピソード i（試行番号）の乱数シードは GEN_SEED_BASE + i。使ったシードは <root>/g1_generation.json に記録する
@@ -21,12 +22,14 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from g1_manip import config, dataset  # noqa: E402
-from g1_manip.env import ReachEnv  # noqa: E402
-from g1_manip.scripted import ScriptedReachPolicy  # noqa: E402
+from g1_manip.env import PickPlaceEnv, ReachEnv  # noqa: E402
+from g1_manip.scripted import ScriptedPickPlacePolicy, ScriptedReachPolicy  # noqa: E402
 
 TASKS = {
     "reach": dict(env=ReachEnv, policy=ScriptedReachPolicy, steps=config.REACH_EPISODE_STEPS,
                   env_state_names=config.REACH_ENV_STATE_NAMES),
+    "pick": dict(env=PickPlaceEnv, policy=ScriptedPickPlacePolicy, steps=config.PICK_EPISODE_STEPS,
+                 env_state_names=config.PICK_ENV_STATE_NAMES),
 }
 
 
@@ -48,7 +51,8 @@ def generate(args, spec, root: Path) -> None:
             action = policy.act()
             frames.append({**obs, "action": action})
             obs = env.step(action)
-        if env.is_success():
+        # demo_ok: 方策側の保存条件（ピック＆プレースでは、指を閉じる前に手がキューブを押していないこと）
+        if env.is_success() and getattr(policy, "demo_ok", lambda: True)():
             dataset.save_episode(ds, frames, env.task_name)
             saved_seeds.append(seed)
         else:

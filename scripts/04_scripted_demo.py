@@ -1,6 +1,7 @@
 """スクリプト方策のデモを実行して、成功するか確認する（データは保存しない）。
 
     python scripts/04_scripted_demo.py --episodes 20          # ビューアなしで 20 エピソード、成功率を表示
+    python scripts/04_scripted_demo.py --task pick --episodes 20
     mjpython scripts/04_scripted_demo.py --view --episodes 3  # ビューアで表示
 """
 
@@ -13,10 +14,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from g1_manip import config  # noqa: E402
-from g1_manip.env import ReachEnv  # noqa: E402
-from g1_manip.scripted import ScriptedReachPolicy  # noqa: E402
+from g1_manip.env import PickPlaceEnv, ReachEnv  # noqa: E402
+from g1_manip.scripted import ScriptedPickPlacePolicy, ScriptedReachPolicy  # noqa: E402
 
-TASKS = {"reach": (ReachEnv, ScriptedReachPolicy, config.REACH_EPISODE_STEPS)}
+TASKS = {"reach": (ReachEnv, ScriptedReachPolicy, config.REACH_EPISODE_STEPS),
+         "pick": (PickPlaceEnv, ScriptedPickPlacePolicy, config.PICK_EPISODE_STEPS)}
 
 
 def main() -> None:
@@ -52,9 +54,15 @@ def main() -> None:
                 time.sleep(max(0.0, dt - (time.time() - t0)))
         ok = env.is_success()
         n_ok += ok
-        err = np.linalg.norm(env.palm_pos() - env.goal)
-        print(f"episode {ep:3d} (seed {seed}): goal={env.goal.round(3)}  手のひら誤差 {err * 100:.2f}cm  "
-              f"速さ {env.palm_speed():.4f}m/s  {'成功' if ok else '失敗'}")
+        if args.task == "pick":
+            print(f"episode {ep:3d} (seed {seed}): 手の向き 把持 {policy.grasp_yaw:+.0f}° / 置く {policy.place_yaw:+.0f}°"
+                  f"{'' if policy.feasible else '（届く候補なし）'}  キューブの位置誤差 {env.place_error() * 100:.2f}cm  "
+                  f"高さ {(env.cube_pos()[2] - env.table_top_z - config.CUBE_HALF) * 100:+.2f}cm  速さ {env.cube_speed():.4f}m/s  "
+                  f"手との接触 {sorted(env.hand_cube_contacts()) or 'なし'}  {'成功' if ok else '失敗'}")
+        else:
+            err = np.linalg.norm(env.palm_pos() - env.goal)
+            print(f"episode {ep:3d} (seed {seed}): goal={env.goal.round(3)}  手のひら誤差 {err * 100:.2f}cm  "
+                  f"速さ {env.palm_speed():.4f}m/s  {'成功' if ok else '失敗'}")
     print(f"\n成功率 {n_ok}/{args.episodes} = {n_ok / args.episodes * 100:.1f}%")
     if viewer is not None:
         viewer.close()

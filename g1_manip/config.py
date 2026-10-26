@@ -123,6 +123,12 @@ IK_MAX_ITERS = 100
 IK_POS_TOL = 1e-3  # [m]
 IK_ORI_TOL = 1e-2  # [rad]
 IK_STEP_TOL = 1e-5  # [rad] 反復1回の関節変化がこれ未満なら、誤差が残っていても打ち切る（正則化との釣り合い点に収束済み）
+# 右腕と胴体の衝突回避（RightHandIK(avoid_body_collision=True)）
+IK_COLLISION_ARM_BODIES = ["right_shoulder_yaw_link", "right_elbow_link", "right_wrist_roll_link",
+                           "right_wrist_pitch_link", "right_wrist_yaw_link"]
+IK_COLLISION_BODY_BODIES = ["torso_link", "pelvis"]
+IK_COLLISION_MIN_DIST = 0.02  # [m]
+IK_COLLISION_DETECT_DIST = 0.06  # [m]
 
 # 準備姿勢: 右手を机の上に上げ、手のひらを下に向けた姿勢。エピソード開始時はここから始める
 # （ホームの腕を下ろした姿勢から前に出すと手首が天板の下に引っかかるため）。腕の関節角は起動時に IK で求める。
@@ -218,6 +224,60 @@ REACH_ENV_STATE_NAMES = ["goal_x", "goal_y", "goal_z"]
 # エピソード開始時の手のひら位置を準備姿勢（READY_PALM_POS）から ± この範囲でずらす（IK で腕の関節角を求める）。
 # 初期状態が毎回同じだと、評価時に observation.state の配線を間違えても結果に表れにくいため。
 READY_PALM_RANDOM = (0.03, 0.03, 0.02)  # [m]
+
+# --- ピック＆プレース ---
+# 机の上のキューブを右手で横からつかみ（手のひらを体の内側＝+y 側に向け、親指と中指で指の向きに挟む）、
+# 目標マーカーの上に置く。上からつかむと頭部カメラ（フェーズ8）で手がキューブを隠すため横から（ユーザー決定）。
+# Dex3 は人差し指と中指が手のひらの幅方向に並ぶので、手のひらを立てると下側の中指だけがキューブに当たる。
+PICK_TASK_NAME = "pick the cube and place it on the target"
+PICK_ENV_STATE_NAMES = ["cube_x", "cube_y", "cube_z", "cube_qw", "cube_qx", "cube_qy", "cube_qz",
+                        "target_x", "target_y", "target_z"]
+CUBE_HALF = 0.0225  # [m] scene_table.xml のキューブの半辺
+# キューブ・目標の範囲（計画書の ±10cm から、横からの把持で腕が届く範囲に狭めた）
+PICK_CUBE_X = (0.22, 0.38)
+PICK_CUBE_Y = (-0.23, -0.07)
+PICK_CUBE_YAW_DEG = 30.0  # ±
+PICK_TARGET_X = (0.22, 0.38)
+PICK_TARGET_Y = (-0.05, 0.05)
+PICK_MIN_DIST = 0.10  # [m] キューブと目標の xy 距離の下限（範囲の境目 y=-0.07/-0.05 付近では 2cm まで近づきうるため）
+PICK_EPISODE_STEPS = 450  # 9 秒（スクリプト方策は約 8 秒で終わり、残りは静止）
+PICK_SUCCESS_TOL = 0.03  # [m] 最終ステップでキューブ中心が目標から xy でこの距離以内
+PICK_SUCCESS_Z_TOL = 0.01  # [m] キューブ中心の高さが天板＋半辺からこの範囲（机の上に平らに置かれている）
+
+# 把持（手のひらサイト座標系: x = 指の向き、y = z×x、z = 手のひらの法線）
+GRASP_CUBE_IN_PALM = (0.035, 0.026, 0.035)  # 把持するときのキューブ中心の位置。y は下向きで、手のひらの中心をキューブの中心より 2.6cm 上にする（1.2cm では手首の下端と中指が天板に当たり、手が奥まで入らないことがあった）
+GRASP_STANDOFF = 0.09  # [m] 把持位置から法線の逆向きにこれだけ離れた位置まで来てから、法線方向に近づく
+GRASP_ABOVE = 0.04  # [m] 最初はさらにこれだけ上に来る（キューブの上から下ろさない）
+# 指の目標（RIGHT_HAND_JOINTS の順）。開: 親指を手のひら側の後ろへ逃がす（近づくときに親指の先がキューブに当たらないよう）。
+# 閉: 親指と中指・人差し指をキューブより深く指令して挟む（握る力は指令と接触位置の差 × kp）
+HAND_OPEN = (0.0, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0)
+HAND_CLOSE = (0.0, -0.3, -1.1, 1.1, 1.2, 1.1, 1.2)
+# 手の向き（yaw）: 指が世界 +x、法線が世界 +y を 0 として、世界 z まわりの角度。把持では指をキューブの面の法線に
+# 合わせたいので「キューブの yaw ＋ 90°の倍数 ＋ ずれ」を候補にし、ずれが小さく GRASP_YAW_PREF_DEG に近い順に、
+# 腕が届く（IK の誤差が PICK_FEASIBLE_TOL 以内）最初の候補を使う。ずれは GRASP_YAW_OFFSETS_DEG まで（20°までは把持できることを確認）。
+GRASP_YAW_PREF_DEG = -15.0
+# 把持の手の向きの範囲。±45° を超えると手のひらの法線が体の内側（+y）より前（+x）や後ろを向き、手がキューブの手前
+# （頭部カメラの側）から近づくことになるので、候補から外す（届かない配置はデモに入らない）
+GRASP_YAW_RANGE_DEG = (-45.0, 45.0)
+GRASP_YAW_OFFSETS_DEG = (0.0, -10.0, 10.0, -20.0, 20.0)
+PLACE_YAW_CANDIDATES_DEG = (15.0, 0.0, 30.0, -15.0, -30.0)  # 置くときの手の向き（キューブは手と一緒に回るので自由に選べる）
+# 運ぶ間に手首を回す角度の上限。60°以上回すと手の中でキューブが上下にずれ、下ろすときに下側の中指が先に天板に当たって
+# キューブが浮いたまま落ちることがあった
+PICK_MAX_YAW_CHANGE_DEG = 45.0
+PICK_FEASIBLE_TOL = 0.005  # [m] 手先の位置誤差 ＋ PICK_FEASIBLE_ORI_WEIGHT × 姿勢誤差 [rad]
+PICK_FEASIBLE_ORI_WEIGHT = 0.05  # [m/rad]
+PICK_FEASIBLE_IK_REPEATS = 3  # 経路の確認で、通過点ごとに IK を解く回数（1 回 = 最大 IK_MAX_ITERS 反復）
+# 右腕の目標角の 1 制御ステップあたりの変化の上限 [rad]（= 2.5 rad/s）。手先の経路が滑らかでも、IK の解が
+# 冗長な自由度（肘の位置など）や手首の特異姿勢の近くで急に組み替わり、1 ステップで 0.3rad 以上跳ぶことがあった
+PICK_MAX_JOINT_STEP = 0.05
+PICK_PREGRASP_MAX_SHIFT = 0.002  # [m] 指を閉じる前にキューブが動いてよい距離。超えたら（手が押した）デモとして保存しない
+LIFT_HEIGHT = 0.10  # [m]
+PLACE_CLEARANCE = 0.005  # [m] 置くときのキューブの底と天板のすき間（ここで指を開いて落とす）
+RETREAT_BACK = 0.08  # [m] 離した後に法線の逆向きに引く距離
+RETREAT_UP = 0.08  # [m]
+# 区間の長さ [s]（各区間の中は min-jerk 補間）
+PICK_TIMES = dict(approach=1.4, descend=0.5, insert=0.7, close=0.7, settle=0.3, lift=0.7, move=1.4,
+                  lower=0.7, release=0.5, back=0.5, up=0.5)
 
 # --- データ生成 ---
 DATA_DIR = PROJECT_ROOT / "data"

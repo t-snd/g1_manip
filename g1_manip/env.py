@@ -1,7 +1,7 @@
 """シーンの読み込み・リセット・観測取得・行動適用・成功判定。
 
 下の関数群（load_model / reset_to_* / joint_* / apply_joint_targets / step_control）が基本部品で、
-タスク単位の環境は ReachEnv（フェーズ5のリーチング）にまとめている。
+タスク単位の環境は ReachEnv（フェーズ5のリーチング）と PickPlaceEnv（ピック＆プレース）にまとめている。
 """
 
 import mujoco
@@ -196,6 +196,16 @@ class ReachEnv:
         """準備姿勢（手のひら位置をランダムにずらす）に戻し、目標点をランダムに決める。
         キューブは手の届かない机の奥の隅に置く。"""
         rng = np.random.default_rng(seed)
+        self._reset_robot(rng)
+        self.data.qpos[self.cube_qpos:self.cube_qpos + 2] = config.REACH_CUBE_PARK_XY
+        self.goal = np.array([rng.uniform(*config.REACH_GOAL_X), rng.uniform(*config.REACH_GOAL_Y),
+                              self.table_top_z + rng.uniform(*config.REACH_GOAL_Z)])
+        self.data.mocap_pos[self.target_mocap] = self.goal  # 目標マーカーを目標点に表示する
+        mujoco.mj_forward(self.model, self.data)
+        return self.observation()
+
+    def _reset_robot(self, rng: np.random.Generator) -> None:
+        """全状態をリセットし、準備姿勢（手のひら位置を READY_PALM_RANDOM の範囲でずらす）に置く。"""
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:] = self.ready_qpos
         self.data.ctrl[:] = self.ready_ctrl
@@ -204,12 +214,6 @@ class ReachEnv:
         arm_q = self.ik.solve(start)
         self.data.qpos[self.arm_qpos] = arm_q
         self.data.ctrl[self.arm_act] = arm_q
-        self.data.qpos[self.cube_qpos:self.cube_qpos + 2] = config.REACH_CUBE_PARK_XY
-        self.goal = np.array([rng.uniform(*config.REACH_GOAL_X), rng.uniform(*config.REACH_GOAL_Y),
-                              self.table_top_z + rng.uniform(*config.REACH_GOAL_Z)])
-        self.data.mocap_pos[self.target_mocap] = self.goal  # 目標マーカーを目標点に表示する
-        mujoco.mj_forward(self.model, self.data)
-        return self.observation()
 
     def observation(self) -> dict:
         return {
@@ -235,3 +239,84 @@ class ReachEnv:
         """手のひらが目標点から REACH_SUCCESS_TOL 以内で、ほぼ静止している。"""
         return (np.linalg.norm(self.palm_pos() - self.goal) <= config.REACH_SUCCESS_TOL
                 and self.palm_speed() <= config.SUCCESS_SPEED_TOL)
+
+
+class PickPlaceEnv(ReachEnv):
+    """ピック＆プレース: 机の上のキューブを右手でつかみ、目標マーカーの上に置く。
+
+    観測:
+      observation.state             CONTROLLED_JOINTS の関節角（14）
+      observation.environment_state キューブの位置（3）＋ 姿勢 quat（4, wxyz, w >= 0）＋ 目標の位置（3, z は天板上面）
+    行動: CONTROLLED_JOINTS の目標角（絶対値、14）
+    """
+
+    task_name = config.PICK_TASK_NAME
+
+    def __init__(self):
+        super().__init__()
+        m = self.model
+        self.cube_dof = m.joint(config.CUBE_JOINT).dofadr[0]
+        self.cube_body = m.body(config.CUBE_BODY).id
+        self.hand_bodies = {b for b in range(m.nbody)
+                            if m.body(b).name.startswith("right_hand_") or m.body(b).name == config.RIGHT_PALM_BODY}
+        self.target = np.zeros(3)
+
+    def reset(self, seed: int) -> dict:
+        """準備姿勢に戻し、キューブ（位置・yaw）と目標をランダムに決める。目標はキューブから PICK_MIN_DIST 以上離す。"""
+        rng = np.random.default_rng(seed)
+        self._reset_robot(rng)
+        cube_xy = np.array([rng.uniform(*config.PICK_CUBE_X), rng.uniform(*config.PICK_CUBE_Y)])
+        yaw = np.deg2rad(rng.uniform(-config.PICK_CUBE_YAW_DEG, config.PICK_CUBE_YAW_DEG))
+        while True:
+            target_xy = np.array([rng.uniform(*config.PICK_TARGET_X), rng.uniform(*config.PICK_TARGET_Y)])
+            if np.linalg.norm(target_xy - cube_xy) >= config.PICK_MIN_DIST:
+                break
+        q = self.cube_qpos
+        self.data.qpos[q:q + 3] = [*cube_xy, self.table_top_z + config.CUBE_HALF]
+        self.data.qpos[q + 3:q + 7] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
+        self.target = np.array([*target_xy, self.table_top_z])
+        # 目標マーカー（厚さ 1mm の円盤）を天板の上に置く
+        self.data.mocap_pos[self.target_mocap] = self.target + [0.0, 0.0, 0.0005]
+        self.goal = self.target  # 04_scripted_demo.py などが env.goal を参照するため
+        mujoco.mj_forward(self.model, self.data)
+        return self.observation()
+
+    def cube_pos(self) -> np.ndarray:
+        return self.data.qpos[self.cube_qpos:self.cube_qpos + 3].copy()
+
+    def cube_quat(self) -> np.ndarray:
+        """キューブの姿勢 quat（wxyz）。q と -q は同じ姿勢なので w >= 0 にそろえる。"""
+        quat = self.data.qpos[self.cube_qpos + 3:self.cube_qpos + 7].copy()
+        return -quat if quat[0] < 0 else quat
+
+    def cube_speed(self) -> float:
+        return float(np.linalg.norm(self.data.qvel[self.cube_dof:self.cube_dof + 3]))
+
+    def hand_cube_contacts(self) -> set[str]:
+        """キューブに触れている右手のボディ名。"""
+        names = set()
+        for i in range(self.data.ncon):
+            c = self.data.contact[i]
+            b1, b2 = self.model.geom_bodyid[c.geom1], self.model.geom_bodyid[c.geom2]
+            for a, b in ((b1, b2), (b2, b1)):
+                if a == self.cube_body and b in self.hand_bodies:
+                    names.add(self.model.body(b).name)
+        return names
+
+    def observation(self) -> dict:
+        env_state = np.concatenate([self.cube_pos(), self.cube_quat(), self.target])
+        return {
+            "observation.state": self.data.qpos[self.state_qpos].astype(np.float32),
+            "observation.environment_state": env_state.astype(np.float32),
+        }
+
+    def place_error(self) -> float:
+        """キューブ中心と目標の xy 距離。"""
+        return float(np.linalg.norm(self.cube_pos()[:2] - self.target[:2]))
+
+    def is_success(self) -> bool:
+        """キューブ中心が目標から xy で PICK_SUCCESS_TOL 以内、机の上に平らに置かれて静止し、手が離れている。"""
+        return (self.place_error() <= config.PICK_SUCCESS_TOL
+                and abs(self.cube_pos()[2] - (self.table_top_z + config.CUBE_HALF)) <= config.PICK_SUCCESS_Z_TOL
+                and self.cube_speed() <= config.SUCCESS_SPEED_TOL
+                and not self.hand_cube_contacts())
