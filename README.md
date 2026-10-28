@@ -293,6 +293,7 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
 
 ```bash
 .venv/bin/python scripts/06_eval_policy.py                                  # 既定: outputs/act_g1_reach_v1/pretrained_model、50 エピソード
+.venv/bin/python scripts/06_eval_policy.py --task pick                      # ピック＆プレース（既定: outputs/act_g1_pick_v1/pretrained_model、data/g1_pick_200）
 .venv/bin/python scripts/06_eval_policy.py --temporal-ensemble 0.01         # 毎ステップ予測して重ねて平均する（ACT 論文の係数）
 .venv/bin/python scripts/06_eval_policy.py --n-action-steps 10              # チャンクのうち 10 個だけ実行して予測し直す（下の結果を参照）
 .venv/bin/python scripts/06_eval_policy.py --episodes 5 --video outputs/eval_reach.mp4
@@ -302,19 +303,23 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
 - 読み込みは `ACTPolicy.from_pretrained` ＋ `make_pre_post_processors`。Colab で学習したモデルは前処理の device が `cuda` なので、
   `preprocessor_overrides={"device_processor": {"device": ...}}` で推論するデバイスに上書きする。device は既定で MPS（無ければ CPU、`--device cpu` も可）。
 - 50Hz で「観測 → 前処理（正規化）→ `select_action` → 後処理（逆正規化）→ 関節目標に適用 → 制御 1 周期」を繰り返す。
-  エピソード開始ごとに `policy.reset()` で行動チャンクのキューを空にする。成功判定はデータ生成と同じ `ReachEnv.is_success()`
-  （最終ステップで手のひらが目標点から 2cm 以内かつ静止）。
+  エピソード開始ごとに `policy.reset()` で行動チャンクのキューを空にする。成功判定はデータ生成と同じ `is_success()`
+  （リーチング：最終ステップで手のひらが目標点から 2cm 以内かつ静止。ピック＆プレース：キューブ中心が目標から xy で 3cm 以内、
+  机の上に平らに置かれて静止し、手が離れている）。
 - 評価のシードは `EVAL_SEED_BASE`（100000）以降。実行前に次を確かめる：
   - モデルの入力キー・次元が環境の観測と一致する（一致しなければ終了）
-  - モデルの正規化統計が学習データ（既定 `data/g1_reach_200`）の `meta/stats.json` と一致し、std の下限 0.01 が効いている
+  - モデルの正規化統計が学習データ（既定 `data/g1_reach_200`、`--task pick` では `data/g1_pick_200`）の `meta/stats.json` と一致し、std の下限 0.01 が効いている
   - 評価のシードが学習データの生成に使ったシード（成功・失敗とも）と重ならない
   - 学習データの最初のエピソードと同じシードでリセットした観測が、保存した frame 0 と一致する（関節の並び順の照合。
     形と統計の照合だけでは並び順の取り違えを検出できないため。関節を 1 組入れ替えると NG になることを確認済み）。
     これが NG のときは環境側の配線が学習時と違い、評価結果に意味が無いので終了する
 - 結果はモデルのフォルダの隣に `eval_<task>_<条件>_<N>ep.json` として保存する（エピソードごとの最終誤差・速さ・行動の跳び・推論時間）。
   「行動の跳び」は制御ステップ間の右腕の目標角の変化の最大で、チャンクの切り替わりでのカクつきの目安。
-- 成功率が `EVAL_MIN_SUCCESS_RATE`（90%）以上なら終了コード 0、未満なら 1（入出力の不一致などで途中終了したときも 1）。
-- **environment_state は正規化されていない**：lerobot 0.6.1 の ACT の既定の `normalization_mapping` は VISUAL・STATE・ACTION だけで
+- 成功率がタスクごとの `EVAL_MIN_SUCCESS_RATES`（リーチング 90%、ピック＆プレース 70%：計画書の目安）以上なら終了コード 0、
+  未満なら 1（入出力の不一致などで途中終了したときも 1）。
+- `--task` ごとに、既定のモデル（`EVAL_POLICY_DIRS`）と照合に使う学習データ（`EVAL_DATASET_DIRS`）が切り替わる。
+- **`act_g1_reach_v1` では environment_state は正規化されていない**（`act_g1_pick_v1` は ENV も MEAN_STD で正規化して学習した）：
+  lerobot 0.6.1 の ACT の既定の `normalization_mapping` は VISUAL・STATE・ACTION だけで
   ENV が無いため、目標点の座標は生の値（m 単位、`g1_reach_200` での std は 2.4〜8.3cm）のまま入る。学習時も評価時も同じ処理なので食い違いではないが、
   成功率が低いときは、`--policy.normalization_mapping='{"VISUAL":"MEAN_STD","STATE":"MEAN_STD","ENV":"MEAN_STD","ACTION":"MEAN_STD"}'`
   を付けて学習し直すことを検討する。
@@ -335,6 +340,30 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
     観測は関節角と目標点だけで速度も時刻も無いため、途中から予測し直すと「動き出し」の行動（ほぼ現在の姿勢）を出して
     遅れたり止まったりすると考えられる（推測）。temporal ensembling は過去のチャンクの予測も平均するので、この問題が起きない。
   - 既定の条件の 6 エピソード（18 秒）の録画：`outputs/act_g1_reach_v1/eval_reach_n100.mp4`（git 管理外）。
+- ピック＆プレースの結果（`act_g1_pick_v1`：Colab で `sanada331/g1_pick`（200 本）から学習。`train_config.json` の steps は 50,000、
+  ENV も MEAN_STD で正規化。評価のシード 100000〜100049、MPS）：
+
+  | 推論の条件 | 成功率 | 置き誤差（xy）中央値 / 最大 | 失敗の内訳 | 行動の跳び 最大（成功のみ） | 推論 平均 |
+  |---|---|---|---|---|---|
+  | 既定（n_action_steps 100） | **43/50 = 86%** | 0.89 / 28.1cm | 持ち上げていない 4、置き位置のずれ 3 | 0.687rad（0.256rad） | 2.9ms/ステップ |
+  | temporal ensembling（係数 0.01） | **42/50 = 84%** | 0.61 / 17.6cm | 持ち上げていない 8 | 0.078rad（0.078rad） | 14.0ms/ステップ |
+  | n_action_steps 10 | 38/50 = 76% | 1.14 / 29.3cm | 持ち上げていない 9、置き位置のずれ 2、手が触れたまま 1 | 0.415rad（0.331rad） | 3.6ms/ステップ |
+
+  - 3 条件とも計画書の目安（70%）を満たした。既定の条件の「置き位置のずれ」3 件は持ち上げが 4〜7cm で止まっていて（成功時は約 10cm）、
+    途中で落としている。n_action_steps 10 の 2 件（シード 100010・100030）は 10cm 以上持ち上げたが、最終ステップでもキューブは
+    手の中にあり（天板から 2.4・4.9cm 上）、目標まで運べていない。
+  - 既定と temporal ensembling では、失敗はキューブが奥（x ≥ 0.34、範囲の上限は 0.38）のときに集中する。temporal ensembling では
+    x < 0.34 が 39/39、x ≥ 0.34 が 3/11（既定は 37/39 と 6/11）。n_action_steps 10 は x < 0.34 でも 6 件失敗した（33/39 と 5/11）。
+  - 指を閉じて settle が終わった時点（持ち上げ直前、180 ステップ目。方策もスクリプト方策と同じ時刻に把持を終える前提）の
+    キューブ中心を手のひらサイト座標で見ると、temporal ensembling の失敗 8 件は同じシードのスクリプト方策より、
+    手のひらの下向き（y）に +0.3〜+1.4cm、法線（z）に +0.2〜+2.0cm ずれている（差の絶対値の平均は 0.66cm・0.62cm、
+    成功 42 件では 0.10cm・0.22cm）。8 件とも同じ向きで、手のひらが高く、手前で止まってキューブの上側をつかみ、
+    持ち上げる途中で抜け落ちる（動画でも確認）。
+    調べたスクリプト：`outputs/act_g1_pick_v1/grasp_diag.py`（git 管理外）。
+  - 既定の条件で 0.6rad を超える跳びは失敗したエピソードのチャンクの切り替わり（300・400 ステップ目）だけで出る（5 件）。
+    つかみ損ねて学習データに無い状態になった後に予測し直した結果で、失敗の原因ではなく結果と考えられる（推測）。
+  - 録画（git 管理外）：既定の条件の成功 3 件 `outputs/act_g1_pick_v1/eval_pick_n100_seed100000-100002.mp4`、
+    失敗（シード 100024）`eval_pick_n100_seed100024_fail.mp4`・`eval_pick_te0.01_seed100024_fail.mp4`。
 - 動作確認：上の実モデルでの評価のほか、Colab のモデルをまねて device を cuda にした試験用モデル（4 ステップだけ学習したもの）で、
   MPS・CPU での読み込みと実行、`--n-action-steps`・`--temporal-ensemble`・`--video`（H.264, 640×480, 50fps）、
   前処理の正規化と後処理の逆正規化が `meta/stats.json` からの手計算と一致すること、学習データが違うモデル（50 本で学習）で

@@ -1,6 +1,7 @@
 """学習済み ACT 方策をシミュレーションで動かし、成功率を出す（フェーズ7）。
 
-    python scripts/06_eval_policy.py                                   # 既定のモデルで 50 エピソード
+    python scripts/06_eval_policy.py                                   # 既定のモデルで 50 エピソード（リーチング）
+    python scripts/06_eval_policy.py --task pick                       # ピック＆プレース（既定のモデルは act_g1_pick_v1）
     python scripts/06_eval_policy.py --policy-path outputs/<RUN_NAME>/pretrained_model
     python scripts/06_eval_policy.py --n-action-steps 10                # チャンクのうち 10 個だけ実行して予測し直す
     python scripts/06_eval_policy.py --temporal-ensemble 0.01           # 毎ステップ予測し、重なった予測を平均する
@@ -12,7 +13,8 @@
   一致するか（std の下限 STATS_STD_FLOOR が効いているか）、学習データの最初のエピソードと同じシードでリセットした
   観測が保存した frame 0 と一致するか（関節の並び順の照合）を確かめる
 - 結果（エピソードごとの誤差・行動の跳びなど）はモデルのフォルダの隣に eval_<task>_<条件>_<N>ep.json として保存する
-- 成功率が EVAL_MIN_SUCCESS_RATE 以上なら終了コード 0、未満なら 1
+- ピック＆プレースでは失敗の内訳（持ち上げていない / 置き位置のずれ / 平らに置けていない / 静止していない / 手が触れたまま）も出す
+- 成功率がタスクの EVAL_MIN_SUCCESS_RATES 以上なら終了コード 0、未満なら 1
 """
 
 import argparse
@@ -31,9 +33,12 @@ from safetensors.torch import load_file
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from g1_manip import config, dataset  # noqa: E402
-from g1_manip.env import ReachEnv  # noqa: E402
+from g1_manip.env import PickPlaceEnv, ReachEnv  # noqa: E402
 
-TASKS = {"reach": (ReachEnv, config.REACH_EPISODE_STEPS)}
+TASKS = {"reach": (ReachEnv, config.REACH_EPISODE_STEPS), "pick": (PickPlaceEnv, config.PICK_EPISODE_STEPS)}
+# ピック＆プレースの失敗の内訳（pick_failure が返す値）
+PICK_FAILURES = {"not_lifted": "持ち上げていない", "misplaced": "置き位置のずれ", "not_flat": "平らに置けていない",
+                 "moving": "静止していない", "hand_contact": "手が触れたまま"}
 STATS_KEYS = ("observation.state", "observation.environment_state", "action")
 
 
@@ -79,7 +84,7 @@ def preflight(env, cfg, policy_path: Path, dataset_root: Path, seeds: list[int])
     print(f"モデルの入力 {want} / 出力 action {action_shape}")
     if want != have or action_shape != (len(config.CONTROLLED_JOINTS),):
         sys.exit(f"モデルの入出力と環境が合わない: 環境の観測 {have}, 行動 {len(config.CONTROLLED_JOINTS)} 次元")
-    # ACT の既定の normalization_mapping には ENV が無く、environment_state は正規化されずに入る（学習時も同じ）
+    # ACT の既定の normalization_mapping には ENV が無く、その場合 environment_state は正規化されずに入る（学習時も同じ）
     env_norm = cfg.normalization_mapping.get("ENV")
     print("environment_state の正規化:",
           env_norm.value if env_norm else "なし（生の値のまま入力。normalization_mapping に ENV が無い）")
@@ -91,7 +96,9 @@ def preflight(env, cfg, policy_path: Path, dataset_root: Path, seeds: list[int])
         min_std >= config.STATS_STD_FLOOR - 1e-6)
     if (dataset_root / "meta" / "stats.json").exists():
         ds_stats = json.loads((dataset_root / "meta" / "stats.json").read_text())
+        # 次元の違うデータ（--task とデータの取り違え）は一致しないとみなす
         diff = max(float(np.abs(stats[k][s] - np.asarray(ds_stats[k][s])).max())
+                   if stats[k][s].shape == np.shape(ds_stats[k][s]) else np.inf
                    for k in STATS_KEYS for s in ("mean", "std"))
         checks[f"モデルの正規化統計が {dataset_root.name}/meta/stats.json と一致（最大差 {diff:.1e}）"] = (
             diff < config.EVAL_STATS_TOL)
@@ -99,6 +106,8 @@ def preflight(env, cfg, policy_path: Path, dataset_root: Path, seeds: list[int])
         print(f"⚠️ {dataset_root}/meta/stats.json が無いので、正規化統計の照合を飛ばす")
     if (dataset_root / dataset.GEN_INFO_FILE).exists():
         info = dataset.read_generation_info(dataset_root)
+        if info["task_name"] != env.task_name:
+            sys.exit(f"{dataset_root} は別のタスク（{info['task_name']}）のデータ。--task と --dataset-root の組み合わせを確かめること")
         overlap = sorted(set(seeds) & set(info["seeds"] + info["failed_seeds"]))
         if overlap:
             sys.exit(f"評価のシードが学習データの生成に使ったシードと重なっている: {overlap[:10]}")
@@ -155,10 +164,54 @@ class VideoWriter:
         self.renderer.close()
 
 
+def pick_failure(env: PickPlaceEnv, max_lift: float) -> str | None:
+    """失敗の内訳（成功なら None）。持ち上げていなければ not_lifted、それ以外は PickPlaceEnv.is_success() の条件のうち
+    最初に満たしていないもの。"""
+    if env.is_success():
+        return None
+    if max_lift < config.PICK_EVAL_LIFTED_MIN:
+        return "not_lifted"
+    if env.place_error() > config.PICK_SUCCESS_TOL:
+        return "misplaced"
+    if abs(env.cube_pos()[2] - (env.table_top_z + config.CUBE_HALF)) > config.PICK_SUCCESS_Z_TOL:
+        return "not_flat"
+    if env.cube_speed() > config.SUCCESS_SPEED_TOL:
+        return "moving"
+    return "hand_contact"
+
+
+def task_metrics(env, max_lift: float) -> dict:
+    """タスクごとの最終状態。final_error_m はリーチングなら手のひらと目標点の距離、ピック＆プレースならキューブと目標の xy 距離。"""
+    if isinstance(env, PickPlaceEnv):
+        cube = env.cube_pos()
+        return {
+            "target": env.target.round(4).tolist(),
+            "final_error_m": env.place_error(),
+            "cube_final": cube.round(4).tolist(),
+            "cube_z_error_m": float(cube[2] - (env.table_top_z + config.CUBE_HALF)),
+            "cube_speed_mps": env.cube_speed(),
+            "hand_contacts": sorted(env.hand_cube_contacts()),
+            "max_lift_m": max_lift,
+            "failure": pick_failure(env, max_lift),
+        }
+    return {
+        "goal": env.goal.round(4).tolist(),
+        "final_error_m": float(np.linalg.norm(env.palm_pos() - env.goal)),
+        "final_speed_mps": env.palm_speed(),
+    }
+
+
 @torch.inference_mode()
 def run_episode(env, policy, pre, post, seed: int, n_steps: int, on_step=None) -> dict:
     obs = env.reset(seed)
     policy.reset()  # 行動チャンクのキュー（temporal ensembling なら重ね合わせの途中結果）を空にする
+    pick = isinstance(env, PickPlaceEnv)
+    start = {}
+    if pick:
+        cube0, quat0 = env.cube_pos(), env.cube_quat()
+        start = {"cube_start": cube0.round(4).tolist(),
+                 "cube_start_yaw_deg": float(np.rad2deg(2 * np.arctan2(quat0[3], quat0[0])))}
+    max_lift = 0.0  # キューブ中心の高さの最大値と初期の高さの差（ピック＆プレースのみ）
     actions = []
     infer_s = []
     for _ in range(n_steps):
@@ -168,6 +221,8 @@ def run_episode(env, policy, pre, post, seed: int, n_steps: int, on_step=None) -
         infer_s.append(time.perf_counter() - t0)
         actions.append(action)
         obs = env.step(action)
+        if pick:
+            max_lift = max(max_lift, float(env.cube_pos()[2] - cube0[2]))
         if on_step is not None:
             on_step()
     # 制御ステップ間の行動の跳び（右腕7関節の最大）。チャンクの切り替わりでカクつくかの目安
@@ -175,9 +230,8 @@ def run_episode(env, policy, pre, post, seed: int, n_steps: int, on_step=None) -
     return {
         "seed": seed,
         "success": bool(env.is_success()),
-        "goal": env.goal.round(4).tolist(),
-        "final_error_m": float(np.linalg.norm(env.palm_pos() - env.goal)),
-        "final_speed_mps": env.palm_speed(),
+        **start,
+        **task_metrics(env, max_lift),
         "max_action_jump_rad": float(jumps.max()),
         "max_action_jump_step": int(jumps.argmax()) + 1,
         "infer_ms_per_step": 1000 * float(np.mean(infer_s)),
@@ -188,10 +242,12 @@ def run_episode(env, policy, pre, post, seed: int, n_steps: int, on_step=None) -
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--task", choices=sorted(TASKS), default="reach")
-    parser.add_argument("--policy-path", type=Path, default=config.EVAL_POLICY_DIR,
-                        help="pretrained_model フォルダ（config.json, model.safetensors, policy_*processor* がある）")
-    parser.add_argument("--dataset-root", type=Path, default=config.EVAL_DATASET_DIR,
-                        help="学習に使ったデータセット（正規化統計とシードの照合用。無ければ照合を飛ばす）")
+    parser.add_argument("--policy-path", type=Path, default=None,
+                        help="pretrained_model フォルダ（config.json, model.safetensors, policy_*processor* がある）。"
+                             "既定: タスクごとの EVAL_POLICY_DIRS")
+    parser.add_argument("--dataset-root", type=Path, default=None,
+                        help="学習に使ったデータセット（正規化統計とシードの照合用。無ければ照合を飛ばす）。"
+                             "既定: タスクごとの EVAL_DATASET_DIRS")
     parser.add_argument("--episodes", type=int, default=config.EVAL_EPISODES)
     parser.add_argument("--seed", type=int, default=config.EVAL_SEED_BASE, help="最初のエピソードの乱数シード")
     parser.add_argument("--device", default="auto", help="auto（MPS があれば mps、無ければ cpu）/ mps / cpu")
@@ -207,7 +263,9 @@ def main() -> None:
     if args.episodes < 1:
         parser.error("--episodes は 1 以上")
 
-    policy_path = args.policy_path.resolve()
+    policy_path = (args.policy_path or config.EVAL_POLICY_DIRS[args.task]).resolve()
+    dataset_root = args.dataset_root or config.EVAL_DATASET_DIRS[args.task]
+    min_rate = config.EVAL_MIN_SUCCESS_RATES[args.task]
     if not (policy_path / "model.safetensors").exists():
         sys.exit(f"{policy_path} にモデルが無い。Colab の手順 9 の zip を outputs/<RUN_NAME>/ に展開すること")
     env_cls, n_steps = TASKS[args.task]
@@ -220,7 +278,7 @@ def main() -> None:
             else f"n{cfg.n_action_steps}")
     print(f"モデル {policy_path}（device {device}, chunk_size {cfg.chunk_size}, n_action_steps {cfg.n_action_steps}, "
           f"temporal_ensemble_coeff {cfg.temporal_ensemble_coeff}）")
-    preflight(env, cfg, policy_path, args.dataset_root, seeds)
+    preflight(env, cfg, policy_path, dataset_root, seeds)
     # 1 回空で推論しておく（MPS は最初の呼び出しだけ準備に 100ms 以上かかり、推論時間の最大値がそれになるため）
     with torch.inference_mode():
         policy.select_action(pre({k: torch.from_numpy(v) for k, v in env.reset(seeds[0]).items()}))
@@ -247,9 +305,15 @@ def main() -> None:
         for ep, seed in enumerate(seeds):
             r = run_episode(env, policy, pre, post, seed, n_steps, on_step)
             results.append(r)
-            print(f"episode {ep:3d} (seed {seed}): goal={np.round(r['goal'], 3)}  手のひら誤差 {r['final_error_m'] * 100:.2f}cm  "
-                  f"速さ {r['final_speed_mps']:.4f}m/s  行動の跳び 最大 {r['max_action_jump_rad']:.3f}rad"
-                  f"（ステップ {r['max_action_jump_step']}）  {'成功' if r['success'] else '失敗'}")
+            jump = f"行動の跳び 最大 {r['max_action_jump_rad']:.3f}rad（ステップ {r['max_action_jump_step']}）"
+            if args.task == "pick":
+                print(f"episode {ep:3d} (seed {seed}): cube={np.round(r['cube_start'][:2], 3)} "
+                      f"yaw {r['cube_start_yaw_deg']:+.0f}° → target={np.round(r['target'][:2], 3)}  "
+                      f"置き誤差 {r['final_error_m'] * 100:.2f}cm  持ち上げ {r['max_lift_m'] * 100:.1f}cm  {jump}  "
+                      f"{'成功' if r['success'] else '失敗（' + PICK_FAILURES[r['failure']] + '）'}")
+            else:
+                print(f"episode {ep:3d} (seed {seed}): goal={np.round(r['goal'], 3)}  手のひら誤差 {r['final_error_m'] * 100:.2f}cm  "
+                      f"速さ {r['final_speed_mps']:.4f}m/s  {jump}  {'成功' if r['success'] else '失敗'}")
     finally:
         if video is not None:
             video.close()
@@ -269,13 +333,20 @@ def main() -> None:
         "infer_ms_max": max(r["infer_ms_max"] for r in results),
         "wall_time_s": time.time() - t_start,
     }
+    if args.task == "pick":
+        summary["failures"] = {k: sum(r["failure"] == k for r in results) for k in PICK_FAILURES}
     out = args.out or policy_path.parent / f"eval_{args.task}_{cond}_{len(results)}ep.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"summary": summary, "episodes": results}, indent=2, ensure_ascii=False))
 
-    print(f"\n成功率 {n_ok}/{len(results)} = {rate * 100:.1f}%（目安 {config.EVAL_MIN_SUCCESS_RATE * 100:.0f}% 以上）")
-    print(f"最終ステップの手のひら誤差: 平均 {errs.mean() * 100:.2f}cm, 中央値 {np.median(errs) * 100:.2f}cm, "
-          f"最大 {errs.max() * 100:.2f}cm（成功は {config.REACH_SUCCESS_TOL * 100:.0f}cm 以内かつ静止）")
+    print(f"\n成功率 {n_ok}/{len(results)} = {rate * 100:.1f}%（目安 {min_rate * 100:.0f}% 以上）")
+    err_stats = f"平均 {errs.mean() * 100:.2f}cm, 中央値 {np.median(errs) * 100:.2f}cm, 最大 {errs.max() * 100:.2f}cm"
+    if args.task == "pick":
+        print(f"最終ステップのキューブと目標の xy 距離: {err_stats}（成功は {config.PICK_SUCCESS_TOL * 100:.0f}cm 以内で、"
+              f"平らに置かれて静止し、手が離れている）")
+        print("失敗の内訳: " + ", ".join(f"{PICK_FAILURES[k]} {n}" for k, n in summary["failures"].items()))
+    else:
+        print(f"最終ステップの手のひら誤差: {err_stats}（成功は {config.REACH_SUCCESS_TOL * 100:.0f}cm 以内かつ静止）")
     print(f"行動の跳び（右腕、制御ステップ間）: 最大 {summary['max_action_jump_rad']:.3f}rad, "
           f"推論 平均 {summary['infer_ms_per_step']:.1f}ms/ステップ（最大 {summary['infer_ms_max']:.1f}ms）, 経過 {summary['wall_time_s']:.0f}s")
     failed = [r["seed"] for r in results if not r["success"]]
@@ -284,7 +355,7 @@ def main() -> None:
     print(f"結果を保存: {out}")
     if video is not None:
         print(f"動画を保存: {args.video}")
-    sys.exit(0 if rate >= config.EVAL_MIN_SUCCESS_RATE else 1)
+    sys.exit(0 if rate >= min_rate else 1)
 
 
 if __name__ == "__main__":

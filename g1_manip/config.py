@@ -296,10 +296,14 @@ STATS_STD_FLOOR = 0.01
 # フェーズ7 評価（scripts/06_eval_policy.py）
 # ---------------------------------------------------------------------------
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"  # 学習済みモデル・評価結果・動画（git 管理外）
-EVAL_POLICY_DIR = OUTPUTS_DIR / "act_g1_reach_v1" / "pretrained_model"  # Colab の手順 9 で持ってきたモデル
-EVAL_DATASET_DIR = DATA_DIR / "g1_reach_200"  # 学習に使ったデータ（正規化統計とシードの照合用）
+# タスクごとの既定値。モデルは Colab の手順 9 で持ってきたもの、データは学習に使ったもの（正規化統計とシードの照合用）
+EVAL_POLICY_DIRS = {"reach": OUTPUTS_DIR / "act_g1_reach_v1" / "pretrained_model",
+                    "pick": OUTPUTS_DIR / "act_g1_pick_v1" / "pretrained_model"}
+EVAL_DATASET_DIRS = {"reach": DATA_DIR / "g1_reach_200", "pick": DATA_DIR / "g1_pick_200"}
 EVAL_EPISODES = 50
-EVAL_MIN_SUCCESS_RATE = 0.90  # 計画書の目安（リーチング 90% 以上）
+EVAL_MIN_SUCCESS_RATES = {"reach": 0.90, "pick": 0.70}  # 計画書の目安（リーチング 90%、ピック＆プレース 70% 以上）
+# ピック＆プレースの失敗の内訳で「持ち上げた」とみなす、キューブ中心の高さの最大値と初期の高さの差 [m]（LIFT_HEIGHT は 10cm）
+PICK_EVAL_LIFTED_MIN = 0.03
 EVAL_STATS_TOL = 1e-5  # モデルの正規化統計と meta/stats.json の一致判定
 # 動画（mujoco.Renderer）。机の向こう側（ロボットの左前）の斜め上から、ロボットと作業領域を見る
 VIDEO_WIDTH, VIDEO_HEIGHT = 640, 480
