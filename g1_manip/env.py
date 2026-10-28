@@ -261,8 +261,13 @@ class PickPlaceEnv(ReachEnv):
                             if m.body(b).name.startswith("right_hand_") or m.body(b).name == config.RIGHT_PALM_BODY}
         self.target = np.zeros(3)
 
-    def reset(self, seed: int) -> dict:
-        """準備姿勢に戻し、キューブ（位置・yaw）と目標をランダムに決める。目標はキューブから PICK_MIN_DIST 以上離す。"""
+    def reset(self, seed: int, cube: tuple[float, float, float] | None = None,
+              target: tuple[float, float] | None = None) -> dict:
+        """準備姿勢に戻し、キューブ（位置・yaw）と目標をランダムに決める。目標はキューブから PICK_MIN_DIST 以上離す。
+
+        cube = (x, y, yaw [deg])・target = (x, y) を渡すと、乱数で決めた後にその値で置き換える（範囲・距離の制約は確かめない）。
+        乱数の使い方は変えないので、同じ seed ならロボットの初期姿勢は指定の有無によらず同じになる。
+        """
         rng = np.random.default_rng(seed)
         self._reset_robot(rng)
         cube_xy = np.array([rng.uniform(*config.PICK_CUBE_X), rng.uniform(*config.PICK_CUBE_Y)])
@@ -271,6 +276,10 @@ class PickPlaceEnv(ReachEnv):
             target_xy = np.array([rng.uniform(*config.PICK_TARGET_X), rng.uniform(*config.PICK_TARGET_Y)])
             if np.linalg.norm(target_xy - cube_xy) >= config.PICK_MIN_DIST:
                 break
+        if cube is not None:
+            cube_xy, yaw = np.array(cube[:2], dtype=float), np.deg2rad(cube[2])
+        if target is not None:
+            target_xy = np.array(target, dtype=float)
         q = self.cube_qpos
         self.data.qpos[q:q + 3] = [*cube_xy, self.table_top_z + config.CUBE_HALF]
         self.data.qpos[q + 3:q + 7] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]

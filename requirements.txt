@@ -9,5 +9,6 @@ numpy==2.2.6
 lerobot[dataset,training]==0.6.1
 torch==2.10.0
 torchvision==0.25.0
+matplotlib==3.11.2  # フェーズ7 の分析の図（scripts/07_analyze_pick.py）だけで使う
 
 # third_party/mujoco_menagerie: git commit 0059d4335f8156206f63a35662313385f7ad6d74

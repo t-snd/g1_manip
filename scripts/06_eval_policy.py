@@ -2,6 +2,8 @@
 
     python scripts/06_eval_policy.py                                   # 既定のモデルで 50 エピソード（リーチング）
     python scripts/06_eval_policy.py --task pick                       # ピック＆プレース（既定のモデルは act_g1_pick_v1）
+    python scripts/06_eval_policy.py --task pick --cube 0.30 -0.15 10 --target 0.28 0.0 --episodes 1 --video outputs/pick.mp4
+                                                                       # キューブ（x, y [m], yaw [deg]）と目標（x, y）を指定して置く
     python scripts/06_eval_policy.py --policy-path outputs/<RUN_NAME>/pretrained_model
     python scripts/06_eval_policy.py --n-action-steps 10                # チャンクのうち 10 個だけ実行して予測し直す
     python scripts/06_eval_policy.py --temporal-ensemble 0.01           # 毎ステップ予測し、重なった予測を平均する
@@ -13,6 +15,7 @@
   一致するか（std の下限 STATS_STD_FLOOR が効いているか）、学習データの最初のエピソードと同じシードでリセットした
   観測が保存した frame 0 と一致するか（関節の並び順の照合）を確かめる
 - 結果（エピソードごとの誤差・行動の跳びなど）はモデルのフォルダの隣に eval_<task>_<条件>_<N>ep.json として保存する
+- ピック＆プレースでは、各エピソードの初期配置に最も近い学習エピソード（正規化した environment_state の距離）も記録する
 - ピック＆プレースでは失敗の内訳（持ち上げていない / 置き位置のずれ / 平らに置けていない / 静止していない / 手が触れたまま）も出す
 - 成功率がタスクの EVAL_MIN_SUCCESS_RATES 以上なら終了コード 0、未満なら 1
 """
@@ -33,6 +36,7 @@ from safetensors.torch import load_file
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from g1_manip import config, dataset  # noqa: E402
+from g1_manip.pick_analysis import ENV_KEY, TrainingNeighbors  # noqa: E402
 from g1_manip.env import PickPlaceEnv, ReachEnv  # noqa: E402
 
 TASKS = {"reach": (ReachEnv, config.REACH_EPISODE_STEPS), "pick": (PickPlaceEnv, config.PICK_EPISODE_STEPS)}
@@ -202,8 +206,10 @@ def task_metrics(env, max_lift: float) -> dict:
 
 
 @torch.inference_mode()
-def run_episode(env, policy, pre, post, seed: int, n_steps: int, on_step=None) -> dict:
-    obs = env.reset(seed)
+def run_episode(env, policy, pre, post, seed: int, n_steps: int, on_step=None, place: dict | None = None,
+                neighbors: TrainingNeighbors | None = None) -> dict:
+    """place: PickPlaceEnv.reset に渡す配置の指定（cube, target）。neighbors があれば初期配置に最も近い学習エピソードを調べる。"""
+    obs = env.reset(seed, **(place or {}))
     policy.reset()  # 行動チャンクのキュー（temporal ensembling なら重ね合わせの途中結果）を空にする
     pick = isinstance(env, PickPlaceEnv)
     start = {}
@@ -211,6 +217,8 @@ def run_episode(env, policy, pre, post, seed: int, n_steps: int, on_step=None) -
         cube0, quat0 = env.cube_pos(), env.cube_quat()
         start = {"cube_start": cube0.round(4).tolist(),
                  "cube_start_yaw_deg": float(np.rad2deg(2 * np.arctan2(quat0[3], quat0[0])))}
+        if neighbors is not None:
+            start["train_nn"] = neighbors.nearest(obs[ENV_KEY])
     max_lift = 0.0  # キューブ中心の高さの最大値と初期の高さの差（ピック＆プレースのみ）
     actions = []
     infer_s = []
@@ -258,10 +266,17 @@ def main() -> None:
                        help="temporal ensembling の係数（ACT 論文は 0.01）。n_action_steps は 1 になる")
     parser.add_argument("--video", type=Path, default=None, help="mp4 の保存先（全エピソードを続けて録る）")
     parser.add_argument("--view", action="store_true", help="ビューアで表示（mjpython で実行すること）")
+    parser.add_argument("--cube", type=float, nargs=3, default=None, metavar=("X", "Y", "YAW_DEG"),
+                        help="pick のみ: キューブを置く位置 [m] と yaw [deg]（全エピソード同じ。ロボットの初期姿勢はシードで変わる）")
+    parser.add_argument("--target", type=float, nargs=2, default=None, metavar=("X", "Y"),
+                        help="pick のみ: 目標の位置 [m]（全エピソード同じ）")
     parser.add_argument("--out", type=Path, default=None, help="結果の JSON（既定: モデルのフォルダの隣の eval_<task>_<条件>_<N>ep.json）")
     args = parser.parse_args()
     if args.episodes < 1:
         parser.error("--episodes は 1 以上")
+    if (args.cube or args.target) and args.task != "pick":
+        parser.error("--cube / --target は --task pick のときだけ使える")
+    place = {k: v for k, v in (("cube", args.cube), ("target", args.target)) if v is not None}
 
     policy_path = (args.policy_path or config.EVAL_POLICY_DIRS[args.task]).resolve()
     dataset_root = args.dataset_root or config.EVAL_DATASET_DIRS[args.task]
@@ -279,6 +294,22 @@ def main() -> None:
     print(f"モデル {policy_path}（device {device}, chunk_size {cfg.chunk_size}, n_action_steps {cfg.n_action_steps}, "
           f"temporal_ensemble_coeff {cfg.temporal_ensemble_coeff}）")
     preflight(env, cfg, policy_path, dataset_root, seeds)
+    neighbors = None
+    if args.task == "pick" and (dataset_root / "data").exists():
+        neighbors = TrainingNeighbors(dataset_root)
+        ref = neighbors.self_nn()
+        print(f"学習データとの近さ: 正規化した environment_state の距離で最も近い学習エピソードを記録する"
+              f"（目安: 学習エピソードどうしの最近傍距離は 中央値 {np.median(ref):.2f}, 最大 {ref.max():.2f}）")
+    if place:
+        # --target を付けないと置き場所はシードの乱数で決まるので、全エピソードで確かめる
+        dists = [np.linalg.norm(env.reset(sd, **place)[ENV_KEY][:2] - env.target[:2]) for sd in seeds]
+        near = [(sd, d) for sd, d in zip(seeds, dists) if d < config.PICK_MIN_DIST]
+        if near:
+            print(f"⚠️ {len(near)}/{len(seeds)} エピソードでキューブと置き場所の xy 距離が学習データの下限 "
+                  f"{config.PICK_MIN_DIST * 100:.0f}cm より近い（最小 {min(d for _, d in near) * 100:.1f}cm、シード {near[0][0]} など）")
+        print(f"配置の指定: {place}（範囲・キューブと目標の距離の制約は確かめない。学習データの範囲は "
+              f"キューブ x {config.PICK_CUBE_X} y {config.PICK_CUBE_Y} yaw ±{config.PICK_CUBE_YAW_DEG:g}°, "
+              f"目標 x {config.PICK_TARGET_X} y {config.PICK_TARGET_Y}）")
     # 1 回空で推論しておく（MPS は最初の呼び出しだけ準備に 100ms 以上かかり、推論時間の最大値がそれになるため）
     with torch.inference_mode():
         policy.select_action(pre({k: torch.from_numpy(v) for k, v in env.reset(seeds[0]).items()}))
@@ -303,7 +334,7 @@ def main() -> None:
     t_start = time.time()
     try:
         for ep, seed in enumerate(seeds):
-            r = run_episode(env, policy, pre, post, seed, n_steps, on_step)
+            r = run_episode(env, policy, pre, post, seed, n_steps, on_step, place, neighbors)
             results.append(r)
             jump = f"行動の跳び 最大 {r['max_action_jump_rad']:.3f}rad（ステップ {r['max_action_jump_step']}）"
             if args.task == "pick":
@@ -311,6 +342,12 @@ def main() -> None:
                       f"yaw {r['cube_start_yaw_deg']:+.0f}° → target={np.round(r['target'][:2], 3)}  "
                       f"置き誤差 {r['final_error_m'] * 100:.2f}cm  持ち上げ {r['max_lift_m'] * 100:.1f}cm  {jump}  "
                       f"{'成功' if r['success'] else '失敗（' + PICK_FAILURES[r['failure']] + '）'}")
+                if "train_nn" in r:
+                    nn = r["train_nn"]
+                    print(f"    学習データで最も近いエピソード {nn['train_episode']}: 正規化距離 {nn['dist_norm']:.2f}"
+                          f"（キューブ xy {nn['nn_cube_xy_m'] * 100:.1f}cm, yaw {nn['nn_yaw_deg']:+.0f}°, "
+                          f"目標 xy {nn['nn_target_xy_m'] * 100:.1f}cm 違い）、キューブ xy だけなら最も近い学習配置まで "
+                          f"{nn['min_cube_xy_m'] * 100:.1f}cm")
             else:
                 print(f"episode {ep:3d} (seed {seed}): goal={np.round(r['goal'], 3)}  手のひら誤差 {r['final_error_m'] * 100:.2f}cm  "
                       f"速さ {r['final_speed_mps']:.4f}m/s  {jump}  {'成功' if r['success'] else '失敗'}")
@@ -326,7 +363,7 @@ def main() -> None:
     summary = {
         "policy_path": str(policy_path), "device": device, "task": args.task, "episodes": len(results),
         "seeds": [seeds[0], seeds[-1]], "chunk_size": cfg.chunk_size, "n_action_steps": cfg.n_action_steps,
-        "temporal_ensemble_coeff": cfg.temporal_ensemble_coeff, "success_rate": rate,
+        "temporal_ensemble_coeff": cfg.temporal_ensemble_coeff, "place": place or None, "success_rate": rate,
         "final_error_m": {"mean": float(errs.mean()), "median": float(np.median(errs)), "max": float(errs.max())},
         "max_action_jump_rad": max(r["max_action_jump_rad"] for r in results),
         "infer_ms_per_step": float(np.mean([r["infer_ms_per_step"] for r in results])),
@@ -335,6 +372,10 @@ def main() -> None:
     }
     if args.task == "pick":
         summary["failures"] = {k: sum(r["failure"] == k for r in results) for k in PICK_FAILURES}
+    if args.cube:
+        cond += "_cube{:+.2f}{:+.2f}{:+.0f}".format(*args.cube)
+    if args.target:
+        cond += "_target{:+.2f}{:+.2f}".format(*args.target)
     out = args.out or policy_path.parent / f"eval_{args.task}_{cond}_{len(results)}ep.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"summary": summary, "episodes": results}, indent=2, ensure_ascii=False))
