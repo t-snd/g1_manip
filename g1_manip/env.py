@@ -247,13 +247,19 @@ class PickPlaceEnv(ReachEnv):
     観測:
       observation.state             CONTROLLED_JOINTS の関節角（14）
       observation.environment_state キューブの位置（3）＋ 姿勢 quat（4, wxyz, w >= 0）＋ 目標の位置（3, z は天板上面）
+      observation.images.head       （images=True のとき）頭部カメラの RGB 画像（IMAGE_HEIGHT, IMAGE_WIDTH, 3）uint8
     行動: CONTROLLED_JOINTS の目標角（絶対値、14）
+
+    画像は直前の mj_step の状態をそのまま描く（mj_forward を呼ばない。シミュレーションの結果を変えないため）。
+    そのため env.palm_pos() と同じく、物理 1 サブステップ分前の位置になる（1mm 未満）。
     """
 
     task_name = config.PICK_TASK_NAME
 
-    def __init__(self):
+    def __init__(self, images: bool = False):
         super().__init__()
+        self.renderer = (mujoco.Renderer(self.model, height=config.IMAGE_HEIGHT, width=config.IMAGE_WIDTH)
+                         if images else None)
         m = self.model
         self.cube_dof = m.joint(config.CUBE_JOINT).dofadr[0]
         self.cube_body = m.body(config.CUBE_BODY).id
@@ -312,12 +318,23 @@ class PickPlaceEnv(ReachEnv):
                     names.add(self.model.body(b).name)
         return names
 
+    def env_state(self) -> np.ndarray:
+        """observation.environment_state（画像を描かずに真値だけ欲しいとき用）。"""
+        return np.concatenate([self.cube_pos(), self.cube_quat(), self.target]).astype(np.float32)
+
     def observation(self) -> dict:
-        env_state = np.concatenate([self.cube_pos(), self.cube_quat(), self.target])
-        return {
+        obs = {
             "observation.state": self.data.qpos[self.state_qpos].astype(np.float32),
-            "observation.environment_state": env_state.astype(np.float32),
+            "observation.environment_state": self.env_state(),
         }
+        if self.renderer is not None:
+            obs[config.IMAGE_KEY] = self.head_image()
+        return obs
+
+    def head_image(self) -> np.ndarray:
+        """頭部カメラの RGB 画像（IMAGE_HEIGHT, IMAGE_WIDTH, 3）uint8。images=True で作った環境だけ。"""
+        self.renderer.update_scene(self.data, camera=config.HEAD_CAMERA_NAME)
+        return self.renderer.render().copy()
 
     def place_error(self) -> float:
         """キューブ中心と目標の xy 距離。"""

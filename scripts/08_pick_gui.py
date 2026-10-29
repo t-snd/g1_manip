@@ -8,9 +8,9 @@
 - 左下: 実行するもの（方策の推論条件・教師・最近傍リプレイ）、ロボットの初期姿勢のシード、実時間で再生するか、動画を保存するか、
   その下に実行の状態と結果
 - 右: 実行中の映像（斜め上の視点と頭部カメラ）。頭部カメラは画像入力版（フェーズ8）で方策が見る視点
-- 方策に渡す観測は env.observation()（データ生成・学習と同じ）。画像入力版（フェーズ8）では、環境の観測に（前処理が受け付ける形の）
-  画像が加われば GUI の変更は少なくて済む想定。ただし画像入力のモデルでは未確認で、モデルの読み込みは ACT 用（06 の load_policy）、
-  入力の形の照合（06 の preflight）もしていない。入力が合わなければ実行時にエラーをステータス欄に出して止まる
+- 方策に渡す観測は env.observation() のうちモデルの入力にあるキー（06 の obs_to_batch。データ生成・学習と同じ形）。
+  モデルの入力に頭部カメラの画像があれば（フェーズ8）、環境で 224×224 の画像も描いて渡す。モデルの読み込みは ACT 用（06 の load_policy）で、
+  入力の形の照合（06 の preflight）はしていない。入力が合わなければ実行時にエラーをステータス欄に出して止まる
 - 実行ごとの結果はモデルのフォルダの隣の gui/runs.jsonl に追記する（動画もそこに保存する）
 - 描画は mujoco.Renderer（オフスクリーン）なので mjpython は要らない
 """
@@ -27,6 +27,7 @@ from tkinter import ttk
 import mujoco
 import numpy as np
 import torch
+from lerobot.configs.policies import PreTrainedConfig
 from PIL import Image, ImageTk
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -61,6 +62,7 @@ DEFAULT_CUBE = (0.28, -0.12, 0.0)  # x, y [m], yaw [deg]（学習時の範囲の
 DEFAULT_TARGET = (0.30, 0.0)
 C_CUBE, C_TARGET, C_TRAIL, C_RANGE = "#e34948", "#1baf7a", "#eb6834", "#8a8984"
 STATUS_FONT = ("Hiragino Sans", 12, "bold")
+MAX_STEPS_PER_TICK = 10  # 「実時間で再生」で 1 回の描画の間に進めるステップ数の上限（追いつけないときに窓が固まらないように）
 
 
 def to_px(x: float, y: float) -> tuple[float, float]:
@@ -87,14 +89,18 @@ class PickGui:
     def __init__(self, root: tk.Tk, args):
         self.root = root
         self.args = args
-        self.env = PickPlaceEnv()
+        # モデルの入力に画像があれば、観測に頭部カメラの画像を入れる環境にする（1 ステップごとに描くので少し遅くなる）
+        self.images = config.IMAGE_KEY in PreTrainedConfig.from_pretrained(args.policy_path).input_features
+        self.env = PickPlaceEnv(images=self.images)
         self.model, self.data = self.env.model, self.env.data
         self.policy_path = args.policy_path.resolve()
         self.out_dir = self.policy_path.parent / "gui"
         self.device = ev.pick_device(args.device)
         self.policies = {}  # (n_action_steps, temporal_ensemble) → (policy, pre, post)
         self.teacher = None
-        self.nb = pa.TrainingNeighbors(args.dataset_root) if (args.dataset_root / "data").exists() else None
+        # 画像入力のデータセットを渡されたら、元の状態のデータセット（environment_state がある）を使う
+        state_root, train_eps = pa.state_dataset(args.dataset_root)
+        self.nb = pa.TrainingNeighbors(state_root, only=train_eps) if (state_root / "data").exists() else None
         self.cube = list(DEFAULT_CUBE)
         self.target = list(DEFAULT_TARGET)
         self.running = False
@@ -118,7 +124,7 @@ class PickGui:
     # --- 画面 ---
     def _build_widgets(self) -> None:
         root = self.root
-        root.title("G1 ピック＆プレース 推論テスト")
+        root.title(f"G1 ピック＆プレース 推論テスト（{'画像' if self.images else '状態'}入力のモデル: {self.policy_path.parent.name}）")
         left = ttk.Frame(root, padding=6)
         left.grid(row=0, column=0, sticky="n")
         right = ttk.Frame(root, padding=6)
@@ -251,7 +257,7 @@ class PickGui:
         if d < config.PICK_MIN_DIST:
             warn.append(f"キューブと置き場所が {d * 100:.1f}cm（学習では {config.PICK_MIN_DIST * 100:.0f}cm 以上）")
         if self.nb is not None:
-            nn = self.nb.nearest(self.env.observation()[pa.ENV_KEY])
+            nn = self.nb.nearest(self.env.env_state())
             ref = self.nb.self_nn()
             lines.append(f"学習データとの近さ: 最も近いエピソード {nn['train_episode']}、正規化距離 {nn['dist_norm']:.2f}"
                          f"（学習エピソードどうしは中央値 {np.median(ref):.2f}・最大 {ref.max():.2f}）、"
@@ -356,7 +362,7 @@ class PickGui:
 
             @torch.inference_mode()
             def act(o):
-                return post(policy.select_action(pre({k: torch.from_numpy(v) for k, v in o.items()}))).squeeze(0).numpy()
+                return post(policy.select_action(pre(ev.obs_to_batch(o, policy.config.input_features)))).squeeze(0).numpy()
         elif kind == "teacher":
             if self.teacher is None:
                 self.teacher = ScriptedPickPlacePolicy(self.env)
@@ -399,6 +405,9 @@ class PickGui:
         # ロボットの動きの速さは実際と同じ）。実時間でないとき: 描画 1 回ごとに 10 ステップ（できるだけ速く）
         if self.realtime.get():
             n = max(1, int((time.perf_counter() - self.t_start) * config.CONTROL_HZ) - self.t)
+            # 1 ステップが制御周期より遅いとき（画像入力のモデルは観測の画像を描くので 1 ステップ約 60ms）は追いつけず、
+            # n が tick ごとに増えて 1 回の tick で窓が固まる。上限を付け、できるだけ速く進める（実時間より遅くなる）
+            n = min(n, MAX_STEPS_PER_TICK)
         else:
             n = 10
         try:

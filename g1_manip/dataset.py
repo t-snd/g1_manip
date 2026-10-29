@@ -16,17 +16,23 @@ from g1_manip import config
 GEN_INFO_FILE = "g1_generation.json"  # 生成時の乱数シードなどを記録するファイル（データセットのルート直下）
 
 
-def make_features(env_state_names: list[str]) -> dict:
+def make_features(env_state_names: list[str] | None, image: bool = False) -> dict:
+    """env_state_names が None なら environment_state を入れない。image なら頭部カメラの画像（IMAGE_KEY）を入れる。"""
     joints = list(config.CONTROLLED_JOINTS)
-    return {
-        "observation.state": {"dtype": "float32", "shape": (len(joints),), "names": joints},
-        "observation.environment_state": {"dtype": "float32", "shape": (len(env_state_names),),
-                                          "names": env_state_names},
-        "action": {"dtype": "float32", "shape": (len(joints),), "names": joints},
-    }
+    features = {"observation.state": {"dtype": "float32", "shape": (len(joints),), "names": joints}}
+    if env_state_names is not None:
+        features["observation.environment_state"] = {"dtype": "float32", "shape": (len(env_state_names),),
+                                                     "names": env_state_names}
+    if image:
+        # dtype "image" は PNG で parquet に埋め込まれる（use_videos=False）。読み込むと float32 (3, H, W)、0〜1 になる
+        features[config.IMAGE_KEY] = {"dtype": "image", "shape": (config.IMAGE_HEIGHT, config.IMAGE_WIDTH, 3),
+                                      "names": ["height", "width", "channels"]}
+    features["action"] = {"dtype": "float32", "shape": (len(joints),), "names": joints}
+    return features
 
 
-def create_dataset(root: Path, repo_id: str, env_state_names: list[str], overwrite: bool) -> LeRobotDataset:
+def create_dataset(root: Path, repo_id: str, env_state_names: list[str] | None, overwrite: bool,
+                   image: bool = False, image_writer_threads: int = 0) -> LeRobotDataset:
     if root.exists():
         if not overwrite:
             raise FileExistsError(f"{root} が既にある（上書きするなら --overwrite）")
@@ -34,10 +40,11 @@ def create_dataset(root: Path, repo_id: str, env_state_names: list[str], overwri
     return LeRobotDataset.create(
         repo_id=repo_id,
         fps=config.FPS,
-        features=make_features(env_state_names),
+        features=make_features(env_state_names, image),
         root=root,
         robot_type="unitree_g1_fixed_base_right_arm_dex3",
         use_videos=False,
+        image_writer_threads=image_writer_threads,
     )
 
 
@@ -59,6 +66,8 @@ def apply_std_floor(root: Path) -> dict[str, int]:
     stats = json.loads(path.read_text())
     floored = {}
     for key in ("observation.state", "observation.environment_state", "action"):
+        if key not in stats:  # 画像入力のデータセットには environment_state が無い
+            continue
         std = np.asarray(stats[key]["std"], dtype=float)
         floored[key] = int((std < config.STATS_STD_FLOOR).sum())
         stats[key]["std"] = np.maximum(std, config.STATS_STD_FLOOR).tolist()

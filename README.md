@@ -40,8 +40,8 @@ python -c "import mujoco, mink, lerobot"
   Colab の Python が 3.12 以上であることも確認すること。
 - `uv pip install lerobot` をバージョン無指定で実行すると、lerobot 0.4.4 に解決されることがあった。
   必ず `requirements.txt` から入れること。
-- 動画のエンコード・デコード（torchcodec）には FFmpeg が必要（フェーズ8の画像入力で使う）：`brew install ffmpeg`。
-  未導入だと lerobot の import 時に torchcodec の警告が出るが、状態ベースのデータセットには影響しない。
+- 動画のエンコード・デコード（torchcodec）には FFmpeg が必要：`brew install ffmpeg`。このプロジェクトのデータセットは動画を使わない
+  （フェーズ8の画像も PNG で parquet に埋め込む）ので不要。未導入だと lerobot の import 時に torchcodec の長い警告（Traceback）が出るが、影響はない。
 
 ## シーン構成（フェーズ2）
 
@@ -390,9 +390,9 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
   窓は 1136×726〜750px（注意や結果の文の行数で変わる。1440×900 の画面に収まる大きさ。結果の文は上面図の幅で折り返し、
   エラー文は 120 文字で切る）。
   「動画を保存」で斜め上の視点の mp4 を、結果は毎回 `outputs/act_g1_pick_v1/gui/runs.jsonl` に残す（git 管理外）。
-- 方策に渡す観測は `env.observation()`（データ生成・学習と同じ）。フェーズ8（画像入力）では、環境の観測に前処理が受け付ける形の
-  頭部カメラ画像が加われば、GUI の変更は少なくて済む想定（画像入力のモデルでは未確認。モデルの読み込みは ACT 用で、入力の形の照合も
-  していない。入力が合わなければ実行時にエラーをステータス欄に出して止まる）。右下の頭部カメラの映像がその視点。
+- 方策に渡す観測は `env.observation()` のうちモデルの入力にあるキー（データ生成・学習と同じ形）。画像入力のモデル（フェーズ8）では、
+  環境で 224×224 の頭部カメラ画像も描いて渡す（下の「画像入力」の節）。右下の頭部カメラの映像がその視点。
+  モデルの読み込みは ACT 用で、入力の形の照合はしていない。入力が合わなければ実行時にエラーをステータス欄に出して止まる。
 - 「配置を最初に戻す」でキューブと置き場所を起動時の位置に戻す。ドラッグできるのは上面図に見えている範囲だけ。
 - 描画は `mujoco.Renderer`（オフスクリーン）なので `mjpython` は要らない。M1 では 1 枚約 50ms かかるので、「実時間で再生」は
   経過した実時間ぶんシミュレーションを進める（ロボットの動きは実際の速さ、映像の更新は 1 秒に 10 回弱。temporal ensembling は推論が
@@ -476,6 +476,66 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
   MPS・CPU での読み込みと実行、`--n-action-steps`・`--temporal-ensemble`・`--video`（H.264, 640×480, 50fps）、
   前処理の正規化と後処理の逆正規化が `meta/stats.json` からの手計算と一致すること、学習データが違うモデル（50 本で学習）で
   統計の照合が NG になることを確認した。`--view`（ビューア）は未確認。
+
+## 画像入力（フェーズ8）
+
+キューブ・目標の真値（`environment_state`）の代わりに、頭部カメラの RGB 画像（224×224、`observation.images.head`）を入力にする。
+入力は関節角（14）＋画像、出力は関節目標角（14）。
+
+### データ（`scripts/05c_add_images.py`）
+
+```bash
+.venv/bin/python scripts/05c_add_images.py                  # data/g1_pick_200 → data/g1_pick_img_200（M1 で約 80 分、約 3.0GB）
+.venv/bin/python scripts/05c_add_images.py --check-only     # 検証だけ
+.venv/bin/python scripts/05b_push_dataset.py --root data/g1_pick_img_200 --repo-id sanada331/g1_pick_img
+```
+
+- 状態ベースのデモ `g1_pick_200` の各エピソードを、記録したシードで初期化して保存した action のまま再生し、各ステップの観測（行動を与える前）で
+  頭部カメラを描く（`PickPlaceEnv(images=True)`）。動き・エピソードの並び・シードは状態ベースの学習データと同じなので、入力の違いだけを比べられる。
+- 保存するのは `observation.state`・`observation.images.head`（PNG で parquet に埋め込む）・`action`。`environment_state` は入れない（計画書）。
+  state と action は元の値をそのまま使い、再生した関節角・`environment_state` が元と一致しなければ止める。
+- 検証：state・action が元と完全に一致、読み込んだ画像がその場で再生して描いた同じステップの画像と完全に一致（PNG なので差 0）し、
+  隣のステップの画像とは違う、画像の正規化統計がある。
+- 画像は直前の `mj_step` の状態をそのまま描く（`mj_forward` を呼ばない。シミュレーションの結果を変えないため）。評価でも同じ描き方をする。
+- **手がキューブを隠す**：エピソード開始時（準備姿勢）は、頭部カメラから見ると右手がキューブを隠している。学習データ 40 本で数えると、
+  t=0 でキューブが見えている割合は中央値 27%（30% 未満が 21 本、完全に隠れているのが 1 本）。0.6 秒後には手が視野の外へ動き、
+  中央値 100%（最小 39%）。置き場所（緑の円盤）は t=0 で中央値 100%。運ぶ間（3.6〜6.6 秒）は手に持ったキューブの半分ほどが隠れる。
+  ユーザー判断で、デモは作り直さずこのまま画像を付けた。推論では temporal ensembling など、こまめに予測し直す条件も比べる。
+
+### 学習（`notebooks/train_act_pick_img_colab.ipynb`, Colab）
+
+状態ベースのピック版のノートブックと手順・設定（50,000 ステップ、batch 64）は同じで、違いは次の点：
+
+- データセット `sanada331/g1_pick_img`、`RUN_NAME = "act_g1_pick_img_v1"`。
+- 画像は ImageNet で事前学習した ResNet18（ACT の既定）で特徴にする。画像の正規化は ImageNet の平均・標準偏差
+  （lerobot-train の既定 `dataset.use_imagenet_stats=true`。`meta/stats.json` の画像の統計は使われない）。
+- データ読み込みの高速化（`G1_FAST_DATA=1`）を画像に対応させた。画像の列は PNG のバイト列のまま（Arrow のメモリマップ）持ち、
+  取り出すときに元の実装と同じく PIL で開いて `ToTensor` する。元の実装は行動 100 ステップ分を引くときに画像も読むので非常に遅い。
+  - Mac で確かめたこと：8 本（3,600 サンプル）の試作データで、元の実装と全キーの値・dtype・形が一致。1 サンプル 約 131ms → 約 1.5ms。
+    MPS での 4 ステップの学習で `data_s` 0.02 秒（`updt_s` 0.5〜0.8 秒、batch 8）。
+- チェックポイント 1 個 約 0.6GB（`pretrained_model` 197MB ＋ `training_state` 394MB）。10 個で約 6GB なので Drive の空きに注意。
+- T4 での速さは未計測（Mac の MPS では batch 64 で 1 ステップ約 4.6 秒）。最初の数百ステップの `updt_s + data_s` で所要時間を見積もる。
+
+### 評価・GUI
+
+```bash
+.venv/bin/python scripts/06_eval_policy.py --task pick --policy-path outputs/act_g1_pick_img_v1/pretrained_model
+.venv/bin/python scripts/06_eval_policy.py --task pick --policy-path outputs/act_g1_pick_img_v1/pretrained_model --temporal-ensemble 0.01
+.venv/bin/python scripts/08_pick_gui.py --policy-path outputs/act_g1_pick_img_v1/pretrained_model
+```
+
+- モデルの入力に `observation.images.head` があれば、環境で頭部カメラを描いて渡す（`obs_to_batch` で学習データの読み込みと同じ
+  float32 (3, 224, 224)、0〜1 にする）。`--dataset-root` を省略すると `data/g1_pick_img_200` と照合する。画像の正規化統計は ImageNet の値と比べる。
+  学習データとの近さ（最近傍）は、`g1_generation.json` に記録した元の状態のデータセット（`g1_pick_200`）のうち、学習データに入っている
+  エピソードで測る（GUI に画像入力のデータセットを `--dataset-root` で渡したときも同じ）。
+- 動作確認（4 ステップだけ学習した試験用モデル。学習データは 8 本の試作データ `data/g1_pick_img_test`）：`--dataset-root data/g1_pick_img_test`
+  を付けると照合がすべて OK（初期観測の画像も保存した frame 0 と差 0）、評価・GUI が最後まで動く。既定の `g1_pick_img_200` と照合すると、
+  学習データが違うので正規化統計の照合が NG になる（取り違えを検出できる）。
+  状態ベースのモデル（`act_g1_pick_v1`）の評価結果は変更前と同じ（シード 100000〜100001 の置き誤差・持ち上げ高さが一致）。
+- 画像入力のモデルは 1 ステップごとに観測の画像を描くので、1 ステップ約 60ms かかり（画像なしは約 1ms）、実時間（20ms）に追いつけない。
+  GUI の「実時間で再生」では描画 1 回の間に進めるステップ数を 10 までにしてあり、9 秒のエピソードが約 35 秒かかる
+  （ほかに重い処理を動かしていないとき。描画の間隔は最長約 0.9 秒。上限が無いと 1 回の描画の間に残り全部を進めて窓が固まった）。状態入力のモデルは今までどおり約 9 秒。
+- `scripts/07_analyze_pick.py`（学習データ・教師・リプレイとの比較）は状態ベースのモデル用で、画像入力のモデルには未対応。
 
 ## 実行上の注意（macOS）
 

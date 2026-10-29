@@ -35,6 +35,16 @@ def load_episodes(root: Path) -> dict[str, np.ndarray]:
     return out
 
 
+def state_dataset(root: Path) -> tuple[Path, list[int] | None]:
+    """environment_state のあるデータセットと、そのうち root の学習データに入っているエピソード（None なら全部）。
+    画像入力のデータセット（05c_add_images.py で作ったもの。environment_state が無い）なら、g1_generation.json に記録した
+    元のデータセット（root の親からの相対パス）と、使ったエピソード（source_episode_index。先頭の一部だけのこともある）を返す。"""
+    gen = root / "g1_generation.json"
+    if gen.exists() and (src := (info := json.loads(gen.read_text())).get("source_dataset")):
+        return (root.parent / src).resolve(), info["source_episode_index"]
+    return root, None
+
+
 def env_stats(root: Path) -> tuple[np.ndarray, np.ndarray]:
     stats = json.loads((root / "meta" / "stats.json").read_text())[ENV_KEY]
     return np.asarray(stats["mean"]), np.asarray(stats["std"])
@@ -48,8 +58,12 @@ def cube_yaw_deg(env_state: np.ndarray) -> np.ndarray:
 class TrainingNeighbors:
     """評価時の初期配置に、学習データのどのエピソードの初期配置が近いかを調べる。"""
 
-    def __init__(self, root: Path, episodes: dict[str, np.ndarray] | None = None):
+    def __init__(self, root: Path, episodes: dict[str, np.ndarray] | None = None, only: list[int] | None = None):
+        """only: 使うエピソード（episode_index）。None なら全部。正規化の統計は root の meta/stats.json（全エピソード）のまま。"""
         self.episodes = episodes if episodes is not None else load_episodes(root)
+        if only is not None:
+            keep = np.isin(self.episodes["episode_index"], only)
+            self.episodes = {k: v[keep] for k, v in self.episodes.items()}
         self.mean, self.std = env_stats(root)
         self.env0 = self.episodes[ENV_KEY][:, 0]  # (エピソード数, 10)
 

@@ -159,6 +159,9 @@ HEAD_CAMERA_POS = (0.074, 0.0, 0.39)  # torso_link 座標系。頭部メッシ�
 HEAD_CAMERA_PITCH_DEG = 56.0  # 水平から下向きの角度
 HEAD_CAMERA_YAW_DEG = -23.0  # 正面から右（-y 側）へ向ける角度は負
 HEAD_CAMERA_FOVY = 60.0
+# 画像入力（フェーズ8）: 頭部カメラの RGB 画像を observation.images.head として保存・入力する（計画書: まず 224×224 程度）
+IMAGE_KEY = "observation.images.head"
+IMAGE_HEIGHT, IMAGE_WIDTH = 224, 224
 
 # ---------------------------------------------------------------------------
 # シーン内オブジェクト名（scene_table.xml と一致させること）
@@ -300,6 +303,8 @@ OUTPUTS_DIR = PROJECT_ROOT / "outputs"  # 学習済みモデル・評価結果�
 EVAL_POLICY_DIRS = {"reach": OUTPUTS_DIR / "act_g1_reach_v1" / "pretrained_model",
                     "pick": OUTPUTS_DIR / "act_g1_pick_v1" / "pretrained_model"}
 EVAL_DATASET_DIRS = {"reach": DATA_DIR / "g1_reach_200", "pick": DATA_DIR / "g1_pick_200"}
+# 画像入力のモデル（フェーズ8）を --task pick で評価するときの学習データ（--dataset-root を省略したとき、モデルの入力に画像があればこちら）
+EVAL_IMAGE_DATASET_DIR = DATA_DIR / "g1_pick_img_200"
 EVAL_EPISODES = 50
 EVAL_MIN_SUCCESS_RATES = {"reach": 0.90, "pick": 0.70}  # 計画書の目安（リーチング 90%、ピック＆プレース 70% 以上）
 # ピック＆プレースの失敗の内訳で「持ち上げた」とみなす、キューブ中心の高さの最大値と初期の高さの差 [m]（LIFT_HEIGHT は 10cm）

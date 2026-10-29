@@ -16,6 +16,8 @@
   観測が保存した frame 0 と一致するか（関節の並び順の照合）を確かめる
 - 結果（エピソードごとの誤差・行動の跳びなど）はモデルのフォルダの隣に eval_<task>_<条件>_<N>ep.json として保存する
 - ピック＆プレースでは、各エピソードの初期配置に最も近い学習エピソード（正規化した environment_state の距離）も記録する
+- 画像入力のモデル（入力に observation.images.head がある。フェーズ8）は、環境で頭部カメラを描いて渡す。
+  --dataset-root を省略すると EVAL_IMAGE_DATASET_DIR と照合し、学習データとの近さは元の状態のデータセット（environment_state がある）で測る
 - ピック＆プレースでは失敗の内訳（持ち上げていない / 置き位置のずれ / 平らに置けていない / 静止していない / 手が触れたまま）も出す
 - 成功率がタスクの EVAL_MIN_SUCCESS_RATES 以上なら終了コード 0、未満なら 1
 """
@@ -32,18 +34,20 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
+from lerobot.utils.constants import IMAGENET_STATS
 from safetensors.torch import load_file
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from g1_manip import config, dataset  # noqa: E402
-from g1_manip.pick_analysis import ENV_KEY, TrainingNeighbors  # noqa: E402
+from g1_manip.pick_analysis import ENV_KEY, TrainingNeighbors, state_dataset  # noqa: E402
 from g1_manip.env import PickPlaceEnv, ReachEnv  # noqa: E402
 
 TASKS = {"reach": (ReachEnv, config.REACH_EPISODE_STEPS), "pick": (PickPlaceEnv, config.PICK_EPISODE_STEPS)}
 # ピック＆プレースの失敗の内訳（pick_failure が返す値）
 PICK_FAILURES = {"not_lifted": "持ち上げていない", "misplaced": "置き位置のずれ", "not_flat": "平らに置けていない",
                  "moving": "静止していない", "hand_contact": "手が触れたまま"}
-STATS_KEYS = ("observation.state", "observation.environment_state", "action")
+# std の下限（STATS_STD_FLOOR）を確かめる正規化統計のキー（画像はチャンネルごとの統計で、下限は付けない）
+FLOOR_KEYS = ("observation.state", "observation.environment_state", "action")
 
 
 def pick_device(name: str) -> str:
@@ -71,40 +75,67 @@ def load_policy(path: Path, device: str, n_action_steps: int | None, te_coeff: f
     return policy, pre, post, cfg
 
 
-def model_norm_stats(path: Path) -> dict[str, dict[str, np.ndarray]]:
-    """前処理（normalizer_processor）に保存された正規化統計（mean, std）を読む。"""
+def obs_to_batch(obs: dict, input_features) -> dict[str, torch.Tensor]:
+    """環境の観測から、モデルの入力にあるキーだけをテンソルにする。画像（H, W, 3）uint8 は、学習データを読み込んだときと
+    同じ float32 (3, H, W)、0〜1 にする（LeRobotDataset は PNG をこの形で返す）。"""
+    batch = {}
+    for k in input_features:
+        v = torch.from_numpy(obs[k])
+        batch[k] = v.permute(2, 0, 1).float() / 255 if v.dtype == torch.uint8 else v
+    return batch
+
+
+def model_norm_stats(path: Path, keys) -> dict[str, dict[str, np.ndarray]]:
+    """前処理（normalizer_processor）に保存された正規化統計（mean, std）を、keys（モデルの入出力）について読む。
+    （index・timestamp など入出力でない列の統計も保存されているが、使われないので見ない）"""
     steps = json.loads((path / "policy_preprocessor.json").read_text())["steps"]
     (step,) = [s for s in steps if s["registry_name"] == "normalizer_processor"]
     tensors = load_file(str(path / step["state_file"]))
-    return {k: {s: tensors[f"{k}.{s}"].numpy() for s in ("mean", "std")} for k in STATS_KEYS}
+    return {k: {s: tensors[f"{k}.{s}"].numpy() for s in ("mean", "std")} for k in keys}
+
+
+def use_imagenet_stats(path: Path) -> bool:
+    """学習時に画像の正規化統計を ImageNet の値に置き換えたか（train_config.json の dataset.use_imagenet_stats。無ければ既定の True）。"""
+    train_cfg = path / "train_config.json"
+    if not train_cfg.exists():
+        return True
+    return json.loads(train_cfg.read_text()).get("dataset", {}).get("use_imagenet_stats", True)
 
 
 def preflight(env, cfg, policy_path: Path, dataset_root: Path, seeds: list[int]) -> None:
     """評価の前に、観測の配線・正規化統計・シードの重なりを確かめる。入出力の形が合わなければ終了する。"""
     obs = env.observation()
     want = {k: tuple(f.shape) for k, f in cfg.input_features.items()}
-    have = {k: v.shape for k, v in obs.items()}
+    missing = sorted(set(want) - set(obs))
+    have = {k: tuple(v.shape) for k, v in obs_to_batch(obs, want).items()} if not missing else {}
     action_shape = tuple(cfg.output_features["action"].shape)
     print(f"モデルの入力 {want} / 出力 action {action_shape}")
-    if want != have or action_shape != (len(config.CONTROLLED_JOINTS),):
-        sys.exit(f"モデルの入出力と環境が合わない: 環境の観測 {have}, 行動 {len(config.CONTROLLED_JOINTS)} 次元")
+    if missing or want != have or action_shape != (len(config.CONTROLLED_JOINTS),):
+        sys.exit(f"モデルの入出力と環境が合わない: 環境の観測 { {k: v.shape for k, v in obs.items()} }"
+                 f"（モデルの入力の形に直すと {have}、無いキー {missing}）, 行動 {len(config.CONTROLLED_JOINTS)} 次元")
     # ACT の既定の normalization_mapping には ENV が無く、その場合 environment_state は正規化されずに入る（学習時も同じ）
-    env_norm = cfg.normalization_mapping.get("ENV")
-    print("environment_state の正規化:",
-          env_norm.value if env_norm else "なし（生の値のまま入力。normalization_mapping に ENV が無い）")
+    if ENV_KEY in cfg.input_features:
+        env_norm = cfg.normalization_mapping.get("ENV")
+        print("environment_state の正規化:",
+              env_norm.value if env_norm else "なし（生の値のまま入力。normalization_mapping に ENV が無い）")
 
     checks = {}
-    stats = model_norm_stats(policy_path)
-    min_std = min(float(stats[k]["std"].min()) for k in STATS_KEYS)
+    stats = model_norm_stats(policy_path, [*cfg.input_features, *cfg.output_features])
+    min_std = min(float(stats[k]["std"].min()) for k in FLOOR_KEYS if k in stats)
     checks[f"モデルの正規化統計の std が下限 {config.STATS_STD_FLOOR} 以上（最小 {min_std:.4f}）"] = (
         min_std >= config.STATS_STD_FLOOR - 1e-6)
     if (dataset_root / "meta" / "stats.json").exists():
         ds_stats = json.loads((dataset_root / "meta" / "stats.json").read_text())
+        # 画像は、学習時に dataset.use_imagenet_stats=true（lerobot-train の既定）なら ImageNet の平均・標準偏差に置き換わる
+        # （事前学習した ResNet18 に合わせる）ので、そちらと比べる
+        imagenet = use_imagenet_stats(policy_path)
+        ref = {k: IMAGENET_STATS if k in cfg.image_features and imagenet else ds_stats.get(k) for k in stats}
         # 次元の違うデータ（--task とデータの取り違え）は一致しないとみなす
-        diff = max(float(np.abs(stats[k][s] - np.asarray(ds_stats[k][s])).max())
-                   if stats[k][s].shape == np.shape(ds_stats[k][s]) else np.inf
-                   for k in STATS_KEYS for s in ("mean", "std"))
-        checks[f"モデルの正規化統計が {dataset_root.name}/meta/stats.json と一致（最大差 {diff:.1e}）"] = (
+        diff = max(float(np.abs(stats[k][s] - np.asarray(ref[k][s])).max())
+                   if ref[k] is not None and stats[k][s].shape == np.shape(ref[k][s]) else np.inf
+                   for k in stats for s in ("mean", "std"))
+        img_note = ("、画像は ImageNet の統計" if imagenet else "、画像はデータセットの統計") if cfg.image_features else ""
+        checks[f"モデルの正規化統計が {dataset_root.name}/meta/stats.json と一致（最大差 {diff:.1e}{img_note}）"] = (
             diff < config.EVAL_STATS_TOL)
     else:
         print(f"⚠️ {dataset_root}/meta/stats.json が無いので、正規化統計の照合を飛ばす")
@@ -120,8 +151,8 @@ def preflight(env, cfg, policy_path: Path, dataset_root: Path, seeds: list[int])
         # 同じシードでリセットした観測が、保存した frame 0 と一致するか
         # 動画は無いので、デコーダは pyav に固定する（既定の torchcodec は FFmpeg が無いと長い警告を出す）
         item = LeRobotDataset(info["repo_id"], root=dataset_root, video_backend="pyav")[0]
-        obs0 = env.reset(info["seeds"][int(item["episode_index"])])
-        diff0 = max(float(np.abs(obs0[k] - item[k].numpy()).max()) for k in obs0)
+        obs0 = obs_to_batch(env.reset(info["seeds"][int(item["episode_index"])]), cfg.input_features)
+        diff0 = max(float(np.abs(obs0[k].numpy() - item[k].numpy()).max()) for k in obs0)
         frame0_ok = int(item["frame_index"]) == 0 and diff0 < config.REPLAY_ENV_STATE_TOL
         checks[f"学習データの最初のエピソードと同じシードの初期観測が、保存した frame 0 と一致（最大差 {diff0:.1e}）"] = frame0_ok
         if not frame0_ok:
@@ -224,7 +255,7 @@ def run_episode(env, policy, pre, post, seed: int, n_steps: int, on_step=None, p
     infer_s = []
     for _ in range(n_steps):
         t0 = time.perf_counter()
-        batch = pre({k: torch.from_numpy(v) for k, v in obs.items()})
+        batch = pre(obs_to_batch(obs, policy.config.input_features))
         action = post(policy.select_action(batch)).squeeze(0).numpy()
         infer_s.append(time.perf_counter() - t0)
         actions.append(action)
@@ -279,24 +310,28 @@ def main() -> None:
     place = {k: v for k, v in (("cube", args.cube), ("target", args.target)) if v is not None}
 
     policy_path = (args.policy_path or config.EVAL_POLICY_DIRS[args.task]).resolve()
-    dataset_root = args.dataset_root or config.EVAL_DATASET_DIRS[args.task]
     min_rate = config.EVAL_MIN_SUCCESS_RATES[args.task]
     if not (policy_path / "model.safetensors").exists():
         sys.exit(f"{policy_path} にモデルが無い。Colab の手順 9 の zip を outputs/<RUN_NAME>/ に展開すること")
-    env_cls, n_steps = TASKS[args.task]
-    env = env_cls()
     seeds = [args.seed + i for i in range(args.episodes)]
 
     device = pick_device(args.device)
     policy, pre, post, cfg = load_policy(policy_path, device, args.n_action_steps, args.temporal_ensemble)
+    images = config.IMAGE_KEY in cfg.input_features
+    if images and args.task != "pick":
+        sys.exit("画像入力のモデルはピック＆プレース（--task pick）だけ")
+    dataset_root = args.dataset_root or (config.EVAL_IMAGE_DATASET_DIR if images else config.EVAL_DATASET_DIRS[args.task])
+    env_cls, n_steps = TASKS[args.task]
+    env = env_cls(images=True) if images else env_cls()
     cond = (f"te{cfg.temporal_ensemble_coeff:g}" if cfg.temporal_ensemble_coeff is not None
             else f"n{cfg.n_action_steps}")
     print(f"モデル {policy_path}（device {device}, chunk_size {cfg.chunk_size}, n_action_steps {cfg.n_action_steps}, "
           f"temporal_ensemble_coeff {cfg.temporal_ensemble_coeff}）")
     preflight(env, cfg, policy_path, dataset_root, seeds)
     neighbors = None
-    if args.task == "pick" and (dataset_root / "data").exists():
-        neighbors = TrainingNeighbors(dataset_root)
+    state_root, train_eps = state_dataset(dataset_root)
+    if args.task == "pick" and (state_root / "data").exists():
+        neighbors = TrainingNeighbors(state_root, only=train_eps)
         ref = neighbors.self_nn()
         print(f"学習データとの近さ: 正規化した environment_state の距離で最も近い学習エピソードを記録する"
               f"（目安: 学習エピソードどうしの最近傍距離は 中央値 {np.median(ref):.2f}, 最大 {ref.max():.2f}）")
@@ -312,7 +347,7 @@ def main() -> None:
               f"目標 x {config.PICK_TARGET_X} y {config.PICK_TARGET_Y}）")
     # 1 回空で推論しておく（MPS は最初の呼び出しだけ準備に 100ms 以上かかり、推論時間の最大値がそれになるため）
     with torch.inference_mode():
-        policy.select_action(pre({k: torch.from_numpy(v) for k, v in env.reset(seeds[0]).items()}))
+        policy.select_action(pre(obs_to_batch(env.reset(seeds[0]), cfg.input_features)))
 
     viewer = None
     if args.view:  # 動画より先に開く（mjpython 以外で失敗したとき、開いた動画ファイルを残さない）
@@ -363,7 +398,8 @@ def main() -> None:
     summary = {
         "policy_path": str(policy_path), "device": device, "task": args.task, "episodes": len(results),
         "seeds": [seeds[0], seeds[-1]], "chunk_size": cfg.chunk_size, "n_action_steps": cfg.n_action_steps,
-        "temporal_ensemble_coeff": cfg.temporal_ensemble_coeff, "place": place or None, "success_rate": rate,
+        "temporal_ensemble_coeff": cfg.temporal_ensemble_coeff, "inputs": sorted(cfg.input_features),
+        "place": place or None, "success_rate": rate,
         "final_error_m": {"mean": float(errs.mean()), "median": float(np.median(errs)), "max": float(errs.max())},
         "max_action_jump_rad": max(r["max_action_jump_rad"] for r in results),
         "infer_ms_per_step": float(np.mean([r["infer_ms_per_step"] for r in results])),
