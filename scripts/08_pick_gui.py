@@ -3,10 +3,11 @@
     python scripts/08_pick_gui.py
     python scripts/08_pick_gui.py --policy-path outputs/<RUN_NAME>/pretrained_model
 
-- 左: 机の上面図。赤い四角（キューブ）と緑の円（置き場所）をドラッグで動かす。キューブの向きはマウスホイールか
-  スライダーで変える。薄い点は学習データの初期配置、破線は学習時の範囲
+- 左上: 机の上面図。赤い四角（キューブ）と緑の三角（置き場所）をドラッグで動かす。キューブの向きはマウスホイールか
+  スライダーで変える。薄い点・三角は学習データの初期配置（印の大きさはこれに合わせた。実寸ではない）、破線は学習時の範囲
+- 左下: 実行するもの（方策の推論条件・教師・最近傍リプレイ）、ロボットの初期姿勢のシード、実時間で再生するか、動画を保存するか、
+  その下に実行の状態と結果
 - 右: 実行中の映像（斜め上の視点と頭部カメラ）。頭部カメラは画像入力版（フェーズ8）で方策が見る視点
-- 下: 実行するもの（方策の推論条件・教師・最近傍リプレイ）、ロボットの初期姿勢のシード、実時間で再生するか、動画を保存するか
 - 方策に渡す観測は env.observation()（データ生成・学習と同じ）。画像入力版（フェーズ8）では、環境の観測に（前処理が受け付ける形の）
   画像が加われば GUI の変更は少なくて済む想定。ただし画像入力のモデルでは未確認で、モデルの読み込みは ACT 用（06 の load_policy）、
   入力の形の照合（06 の preflight）もしていない。入力が合わなければ実行時にエラーをステータス欄に出して止まる
@@ -43,8 +44,10 @@ _spec.loader.exec_module(ev)
 VIEW_X = (0.10, 0.48)  # 下端（ロボット側）・上端
 VIEW_Y = (0.20, -0.36)  # 左端・右端
 SCALE = 1100.0  # [px/m]
-CUBE_SIZE = 2 * config.CUBE_HALF
-TARGET_RADIUS = 0.04  # scene_table.xml の目標の円盤の半径
+# キューブと置き場所の印の大きさ [px]。学習データの初期配置の点（半径 2px）・三角と同じくらいにする
+# （実寸だとキューブ 1 辺 4.5cm・目標の円盤 直径 8cm で、学習データの点に比べて大きすぎ、配置が読み取りにくい）
+CUBE_MARK = 4.5  # 正方形の半辺
+TARGET_MARK = 6.0  # 三角の中心から頂点まで
 IMG_W, IMG_H = 440, 330  # 右側の映像 1 枚の大きさ（2 枚縦に並べて、M1 MacBook の画面に収まる大きさ）
 # 実行するもの: 表示名 → (種類, n_action_steps, temporal_ensemble)
 MODES = {
@@ -57,6 +60,7 @@ MODES = {
 DEFAULT_CUBE = (0.28, -0.12, 0.0)  # x, y [m], yaw [deg]（学習時の範囲の中央付近）
 DEFAULT_TARGET = (0.30, 0.0)
 C_CUBE, C_TARGET, C_TRAIL, C_RANGE = "#e34948", "#1baf7a", "#eb6834", "#8a8984"
+STATUS_FONT = ("Hiragino Sans", 12, "bold")
 
 
 def to_px(x: float, y: float) -> tuple[float, float]:
@@ -65,6 +69,18 @@ def to_px(x: float, y: float) -> tuple[float, float]:
 
 def to_world(u: float, v: float) -> tuple[float, float]:
     return VIEW_X[1] - v / SCALE, VIEW_Y[0] - u / SCALE
+
+
+def square_px(x: float, y: float, yaw_deg: float, half: float) -> list[float]:
+    """位置 (x, y) [m] を中心に、yaw だけ回した半辺 half [px] の正方形の頂点（キャンバスの座標）。"""
+    u, v = to_px(x, y)
+    a = np.deg2rad(yaw_deg)
+    pts = []
+    for dx, dy in ((1, 1), (1, -1), (-1, -1), (-1, 1)):
+        # ワールドの (dx, dy) をキャンバスへ: x が上（-v）、y が左（-u）
+        wx, wy = np.cos(a) * dx - np.sin(a) * dy, np.sin(a) * dx + np.cos(a) * dy
+        pts += [u - wy * half, v - wx * half]
+    return pts
 
 
 class PickGui:
@@ -107,15 +123,13 @@ class PickGui:
         left.grid(row=0, column=0, sticky="n")
         right = ttk.Frame(root, padding=6)
         right.grid(row=0, column=1, sticky="n")
-        bottom = ttk.Frame(root, padding=6)
-        bottom.grid(row=1, column=0, columnspan=2, sticky="ew")
 
         w = int((VIEW_Y[0] - VIEW_Y[1]) * SCALE)
         h = int((VIEW_X[1] - VIEW_X[0]) * SCALE)
-        ttk.Label(left, text="上面図: 赤 = キューブの初期位置（ドラッグで移動、ホイールで向き）、緑 = 置き場所（ドラッグ）\n"
+        ttk.Label(left, text="上面図: 赤 ■ = キューブの初期位置（ドラッグで移動、ホイールで向き）、緑 ▲ = 置き場所（ドラッグ）\n"
                              "実行中・実行後: 赤い枠 = いまのキューブ、オレンジの線 = 手のひらの軌跡").pack(anchor="w")
         self.canvas = tk.Canvas(left, width=w, height=h, bg="white", highlightthickness=1, highlightbackground="#c3c2b7")
-        self.canvas.pack()
+        self.canvas.pack(anchor="w")  # 操作欄の方が少し幅をとるので、ラベル・結果の文と左端をそろえる
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
@@ -139,27 +153,35 @@ class PickGui:
         self.img_head = ttk.Label(right)
         self.img_head.pack()
 
-        ttk.Label(bottom, text="実行するもの").grid(row=0, column=0, sticky="w")
+        # 操作と結果は上面図の下に置く（窓の下端に並べると、右の映像 2 枚より下になって画面からはみ出す）
+        ttk.Separator(left).pack(fill="x", pady=6)
+        ctrl = ttk.Frame(left)
+        ctrl.pack(fill="x")
+        row = ttk.Frame(ctrl)
+        row.pack(fill="x")
+        ttk.Label(row, text="実行するもの").pack(side="left")
         self.mode = tk.StringVar(value=next(iter(MODES)))
-        ttk.Combobox(bottom, textvariable=self.mode, values=list(MODES), state="readonly", width=46).grid(row=0, column=1, padx=4)
-        ttk.Label(bottom, text="初期姿勢のシード").grid(row=0, column=2, sticky="w", padx=(10, 0))
+        ttk.Combobox(row, textvariable=self.mode, values=list(MODES), state="readonly", width=46).pack(side="left", padx=4)
+        self.btn_run = ttk.Button(row, text="実行", command=self.run)
+        self.btn_run.pack(side="left")
+        self.btn_stop = ttk.Button(row, text="停止", command=self.stop, state="disabled")
+        self.btn_stop.pack(side="left", padx=4)
+        row = ttk.Frame(ctrl)
+        row.pack(fill="x", pady=(4, 0))
+        ttk.Label(row, text="初期姿勢のシード").pack(side="left")
         self.seed = tk.IntVar(value=config.EVAL_SEED_BASE)
-        spin = ttk.Spinbox(bottom, from_=0, to=10**9, textvariable=self.seed, width=9, command=self.reset_scene)
-        spin.grid(row=0, column=3, padx=4)
+        spin = ttk.Spinbox(row, from_=0, to=10**9, textvariable=self.seed, width=9, command=self.reset_scene)
+        spin.pack(side="left", padx=4)
         spin.bind("<Return>", self.reset_scene)
         spin.bind("<FocusOut>", self.reset_scene)
         self.realtime = tk.BooleanVar(value=True)
-        ttk.Checkbutton(bottom, text="実時間で再生", variable=self.realtime).grid(row=0, column=4, padx=6)
+        ttk.Checkbutton(row, text="実時間で再生", variable=self.realtime).pack(side="left", padx=6)
         self.save_video = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bottom, text="動画を保存", variable=self.save_video).grid(row=0, column=5, padx=6)
-        self.btn_run = ttk.Button(bottom, text="実行", command=self.run)
-        self.btn_run.grid(row=0, column=6, padx=4)
-        self.btn_stop = ttk.Button(bottom, text="停止", command=self.stop, state="disabled")
-        self.btn_stop.grid(row=0, column=7, padx=4)
-        ttk.Button(bottom, text="配置を最初に戻す", command=self.reset_placement).grid(row=0, column=8, padx=4)
+        ttk.Checkbutton(row, text="動画を保存", variable=self.save_video).pack(side="left", padx=6)
+        ttk.Button(row, text="配置を最初に戻す", command=self.reset_placement).pack(side="right")
+        # 結果の文は上面図の幅で折り返す（窓が画面の高さに収まるよう、動画はファイル名だけ出す。フルパスは runs.jsonl にある）
         self.status = tk.StringVar()
-        ttk.Label(bottom, textvariable=self.status, font=("Hiragino Sans", 13, "bold")).grid(
-            row=1, column=0, columnspan=9, sticky="w", pady=(6, 0))
+        ttk.Label(left, textvariable=self.status, font=STATUS_FONT, justify="left", wraplength=w).pack(anchor="w", pady=(6, 0))
 
     def draw_topview(self) -> None:
         c = self.canvas
@@ -187,16 +209,11 @@ class PickGui:
         u, v = to_px(*self.target)
         r = config.PICK_MIN_DIST * SCALE
         c.create_oval(u - r, v - r, u + r, v + r, outline=C_TARGET, dash=(2, 3))
-        rt = TARGET_RADIUS * SCALE
-        c.create_oval(u - rt, v - rt, u + rt, v + rt, fill=C_TARGET, outline="white", width=2, tags="target")
-        # キューブ（向きつきの正方形）
-        x, y, yaw = self.cube
-        h = CUBE_SIZE / 2
-        cs, sn = np.cos(np.deg2rad(yaw)), np.sin(np.deg2rad(yaw))
-        pts = []
-        for dx, dy in ((h, h), (h, -h), (-h, -h), (-h, h)):
-            pts += to_px(x + cs * dx - sn * dy, y + sn * dx + cs * dy)
-        c.create_polygon(*pts, fill=C_CUBE, outline="white", width=2, tags="cube")
+        # 置き場所（学習データの置き場所と同じ三角）とキューブ（向きつきの正方形）。学習データの点より少し大きいだけ
+        r = TARGET_MARK
+        c.create_polygon(u, v - r, u - 0.87 * r, v + 0.5 * r, u + 0.87 * r, v + 0.5 * r, fill=C_TARGET, outline="white",
+                         tags="target")
+        c.create_polygon(*square_px(*self.cube, CUBE_MARK), fill=C_CUBE, outline="white", tags="cube")
         self.draw_dynamic()
 
     def draw_dynamic(self) -> None:
@@ -207,10 +224,9 @@ class PickGui:
         if len(self.trail) > 1:
             c.create_line(*[p for xy in self.trail for p in to_px(*xy)], fill=C_TRAIL, width=2, tags="dynamic")
         if self.running or self.trail:
-            h = CUBE_SIZE / 2
-            u, v = to_px(*self.env.cube_pos()[:2])
-            c.create_rectangle(u - h * SCALE, v - h * SCALE, u + h * SCALE, v + h * SCALE, outline=C_CUBE, width=2,
-                               tags="dynamic")
+            yaw = float(pa.cube_yaw_deg(np.r_[np.zeros(3), self.env.cube_quat()]))
+            c.create_polygon(*square_px(*self.env.cube_pos()[:2], yaw, CUBE_MARK + 2), fill="", outline=C_CUBE,
+                             width=2, tags="dynamic")
 
     def render_images(self) -> None:
         self.r_view.update_scene(self.data, camera=self.cam)
@@ -421,14 +437,16 @@ class PickGui:
                   "success": done and failure is None, "failure": failure, "place_error_m": self.env.place_error(), "max_lift_m": self.max_lift,
                   "video": str(self.video_path) if self.video is not None else None}
         if error is not None:
-            self.status.set(f"エラーで停止（{self.t / config.CONTROL_HZ:.1f} 秒）: {error}")
+            # 結果の欄は折り返すので、長いと窓が画面の下にはみ出す。全文は runs.jsonl の error にある
+            short = error if len(error) <= 120 else error[:120] + "…（全文は gui/runs.jsonl）"
+            self.status.set(f"エラーで停止（{self.t / config.CONTROL_HZ:.1f} 秒）: {short}")
         elif stopped:
             self.status.set(f"停止（{self.t / config.CONTROL_HZ:.1f} 秒）")
         else:
             verdict = "成功" if failure is None else f"失敗（{ev.PICK_FAILURES[failure]}）"
             self.status.set(f"{verdict}   置き誤差 {result['place_error_m'] * 100:.2f}cm   持ち上げ {self.max_lift * 100:.1f}cm"
                             f"   ［{self.run_mode}、シード {result['seed']}］"
-                            + (f"   動画: {self.video_path}" if self.video is not None else ""))
+                            + (f"   動画: gui/{self.video_path.name}" if self.video is not None else ""))
         self.out_dir.mkdir(parents=True, exist_ok=True)
         with open(self.out_dir / "runs.jsonl", "a") as f:
             f.write(json.dumps(result, ensure_ascii=False) + "\n")
@@ -492,6 +510,9 @@ def selftest(app: PickGui, root: tk.Tk, shot: Path | None) -> None:
         app.on_yaw()
         app.realtime.set(False)
         print(f"selftest: 配置 cube {app.cube}, target {app.target}")
+        root.update_idletasks()
+        print(f"selftest: 窓の大きさ {root.winfo_reqwidth()}x{root.winfo_reqheight()}、"
+              f"画面 {root.winfo_screenwidth()}x{root.winfo_screenheight()}")
         app.run()
         root.after(200, wait)
 
@@ -500,6 +521,8 @@ def selftest(app: PickGui, root: tk.Tk, shot: Path | None) -> None:
             root.after(200, wait)
             return
         r = app.last_result
+        root.update_idletasks()
+        print(f"selftest: 結果表示後の窓の大きさ {root.winfo_reqwidth()}x{root.winfo_reqheight()}")
         print(f"selftest: 結果 success={r['success']} failure={r['failure']} place_error={r['place_error_m'] * 100:.2f}cm "
               f"max_lift={r['max_lift_m'] * 100:.1f}cm steps={r['steps']}")
         if shot is not None:
