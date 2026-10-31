@@ -1,22 +1,20 @@
 """ピック＆プレースの推論を GUI で試す（キューブと置き場所を上面図で置いて、方策・教師・最近傍リプレイを動かす）。
 
-    python scripts/08_pick_gui.py
-    python scripts/08_pick_gui.py --policy-path outputs/<RUN_NAME>/pretrained_model
+    python -m g1_manip gui
+    python -m g1_manip gui --policy-path outputs/<RUN_NAME>/pretrained_model
 
 - 左上: 机の上面図。赤い四角（キューブ）と緑の三角（置き場所）をドラッグで動かす。キューブの向きはマウスホイールか
   スライダーで変える。薄い点・三角は学習データの初期配置（印の大きさはこれに合わせた。実寸ではない）、破線は学習時の範囲
 - 左下: 実行するもの（方策の推論条件・教師・最近傍リプレイ）、ロボットの初期姿勢のシード、実時間で再生するか、動画を保存するか、
   その下に実行の状態と結果
 - 右: 実行中の映像（斜め上の視点と頭部カメラ）。頭部カメラは画像入力版（フェーズ8）で方策が見る視点
-- 方策に渡す観測は env.observation() のうちモデルの入力にあるキー（06 の obs_to_batch。データ生成・学習と同じ形）。
-  モデルの入力に頭部カメラの画像があれば（フェーズ8）、環境で 224×224 の画像も描いて渡す。モデルの読み込みは ACT 用（06 の load_policy）で、
-  入力の形の照合（06 の preflight）はしていない。入力が合わなければ実行時にエラーをステータス欄に出して止まる
+- 方策に渡す観測は env.observation() のうちモデルの入力にあるキー（policy.obs_to_batch。データ生成・学習と同じ形）。
+  モデルの入力に頭部カメラの画像があれば（フェーズ8）、環境で 224×224 の画像も描いて渡す。モデルの読み込みは ACT 用（policy.load_policy）で、
+  入力の形の照合（eval の preflight）はしていない。入力が合わなければ実行時にエラーをステータス欄に出して止まる
 - 実行ごとの結果はモデルのフォルダの隣の gui/runs.jsonl に追記する（動画もそこに保存する）
 - 描画は mujoco.Renderer（オフスクリーン）なので mjpython は要らない
 """
 
-import argparse
-import importlib.util
 import json
 import sys
 import time
@@ -26,20 +24,15 @@ from tkinter import ttk
 
 import mujoco
 import numpy as np
-import torch
-from lerobot.configs.policies import PreTrainedConfig
 from PIL import Image, ImageTk
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g1_manip import config  # noqa: E402
-from g1_manip import pick_analysis as pa  # noqa: E402
-from g1_manip.env import PickPlaceEnv  # noqa: E402
-from g1_manip.scripted import ScriptedPickPlacePolicy  # noqa: E402
-
-# モデルの読み込み・失敗の分類・動画の書き出しは評価スクリプトと同じものを使う（ファイル名が数字で始まるので import 文では読めない）
-_spec = importlib.util.spec_from_file_location("eval_policy", Path(__file__).with_name("06_eval_policy.py"))
-ev = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(ev)
+from g1_manip import config
+from g1_manip import training_data as td
+from g1_manip.env import PickPlaceEnv
+from g1_manip.policy import load_policy, make_actor, needs_images, pick_device
+from g1_manip.rollout import PICK_FAILURES, pick_failure
+from g1_manip.scripted import ScriptedPickPlacePolicy
+from g1_manip.video import VideoWriter, overview_camera
 
 # 上面図の表示範囲 [m]（縦が x：上がロボットの前方、横が y：右がロボットの右手側）と縮尺
 VIEW_X = (0.10, 0.48)  # 下端（ロボット側）・上端
@@ -90,17 +83,17 @@ class PickGui:
         self.root = root
         self.args = args
         # モデルの入力に画像があれば、観測に頭部カメラの画像を入れる環境にする（1 ステップごとに描くので少し遅くなる）
-        self.images = config.IMAGE_KEY in PreTrainedConfig.from_pretrained(args.policy_path).input_features
+        self.images = needs_images(args.policy_path)
         self.env = PickPlaceEnv(images=self.images)
         self.model, self.data = self.env.model, self.env.data
         self.policy_path = args.policy_path.resolve()
         self.out_dir = self.policy_path.parent / "gui"
-        self.device = ev.pick_device(args.device)
-        self.policies = {}  # (n_action_steps, temporal_ensemble) → (policy, pre, post)
+        self.device = pick_device(args.device)
+        self.policies = {}  # (n_action_steps, temporal_ensemble) → (policy, act)
         self.teacher = None
         # 画像入力のデータセットを渡されたら、元の状態のデータセット（environment_state がある）を使う
-        state_root, train_eps = pa.state_dataset(args.dataset_root)
-        self.nb = pa.TrainingNeighbors(state_root, only=train_eps) if (state_root / "data").exists() else None
+        state_root, train_eps = td.state_dataset(args.dataset_root)
+        self.nb = td.TrainingNeighbors(state_root, only=train_eps) if (state_root / "data").exists() else None
         self.cube = list(DEFAULT_CUBE)
         self.target = list(DEFAULT_TARGET)
         self.running = False
@@ -111,12 +104,7 @@ class PickGui:
 
         self.r_view = mujoco.Renderer(self.model, height=IMG_H, width=IMG_W)
         self.r_head = mujoco.Renderer(self.model, height=IMG_H, width=IMG_W)
-        self.cam = mujoco.MjvCamera()
-        mujoco.mjv_defaultFreeCamera(self.model, self.cam)
-        self.cam.lookat[:] = config.VIDEO_LOOKAT
-        self.cam.distance = config.VIDEO_DISTANCE
-        self.cam.azimuth = config.VIDEO_AZIMUTH
-        self.cam.elevation = config.VIDEO_ELEVATION
+        self.cam = overview_camera(self.model)
 
         self._build_widgets()
         self.reset_scene()
@@ -230,7 +218,7 @@ class PickGui:
         if len(self.trail) > 1:
             c.create_line(*[p for xy in self.trail for p in to_px(*xy)], fill=C_TRAIL, width=2, tags="dynamic")
         if self.running or self.trail:
-            yaw = float(pa.cube_yaw_deg(np.r_[np.zeros(3), self.env.cube_quat()]))
+            yaw = float(td.cube_yaw_deg(np.r_[np.zeros(3), self.env.cube_quat()]))
             c.create_polygon(*square_px(*self.env.cube_pos()[:2], yaw, CUBE_MARK + 2), fill="", outline=C_CUBE,
                              width=2, tags="dynamic")
 
@@ -338,12 +326,13 @@ class PickGui:
         self.status.set("")
 
     def _policy(self, n_action_steps, te):
+        """(policy, act)。推論の条件ごとに一度だけ読み込む。"""
         key = (n_action_steps, te)
         if key not in self.policies:
             self.status.set("モデルを読み込み中…")
             self.root.update_idletasks()
-            policy, pre, post, _ = ev.load_policy(self.policy_path, self.device, n_action_steps, te)
-            self.policies[key] = (policy, pre, post)
+            policy, pre, post, _ = load_policy(self.policy_path, self.device, n_action_steps, te)
+            self.policies[key] = (policy, make_actor(policy, pre, post))
         return self.policies[key]
 
     def run(self) -> None:
@@ -355,14 +344,14 @@ class PickGui:
         kind, n_action_steps, te = MODES[self.run_mode]
         place = {"cube": tuple(self.cube), "target": tuple(self.target)}
         obs = self.env.reset(seed, **place)
-        nn = self.nb.nearest(obs[pa.ENV_KEY]) if self.nb is not None else None
+        nn = self.nb.nearest(obs[td.ENV_KEY]) if self.nb is not None else None
         if kind == "policy":
-            policy, pre, post = self._policy(n_action_steps, te)
+            try:
+                policy, act = self._policy(n_action_steps, te)
+            except ValueError as e:
+                self.status.set(str(e))
+                return
             policy.reset()
-
-            @torch.inference_mode()
-            def act(o):
-                return post(policy.select_action(pre(ev.obs_to_batch(o, policy.config.input_features)))).squeeze(0).numpy()
         elif kind == "teacher":
             if self.teacher is None:
                 self.teacher = ScriptedPickPlacePolicy(self.env)
@@ -390,7 +379,7 @@ class PickGui:
         if self.save_video.get():
             self.out_dir.mkdir(parents=True, exist_ok=True)
             self.video_path = self.out_dir / time.strftime("run_%Y%m%d_%H%M%S.mp4")
-            self.video = ev.VideoWriter(self.video_path, self.model)
+            self.video = VideoWriter(self.video_path, self.model)
         self.running = True
         self.run_id += 1
         self.t_start = time.perf_counter()
@@ -441,7 +430,7 @@ class PickGui:
         if self.video is not None:
             self.video.close()
         done = not stopped and error is None
-        failure = ev.pick_failure(self.env, self.max_lift) if done else None
+        failure = pick_failure(self.env, self.max_lift) if done else None
         result = {**self.run_info, "steps": self.t, "stopped": stopped, "error": error,
                   "success": done and failure is None, "failure": failure, "place_error_m": self.env.place_error(), "max_lift_m": self.max_lift,
                   "video": str(self.video_path) if self.video is not None else None}
@@ -452,7 +441,7 @@ class PickGui:
         elif stopped:
             self.status.set(f"停止（{self.t / config.CONTROL_HZ:.1f} 秒）")
         else:
-            verdict = "成功" if failure is None else f"失敗（{ev.PICK_FAILURES[failure]}）"
+            verdict = "成功" if failure is None else f"失敗（{PICK_FAILURES[failure]}）"
             self.status.set(f"{verdict}   置き誤差 {result['place_error_m'] * 100:.2f}cm   持ち上げ {self.max_lift * 100:.1f}cm"
                             f"   ［{self.run_mode}、シード {result['seed']}］"
                             + (f"   動画: gui/{self.video_path.name}" if self.video is not None else ""))
@@ -542,15 +531,16 @@ def selftest(app: PickGui, root: tk.Tk, shot: Path | None) -> None:
     root.after(500, step1)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def add_arguments(parser) -> None:
     parser.add_argument("--policy-path", type=Path, default=config.EVAL_POLICY_DIRS["pick"])
     parser.add_argument("--dataset-root", type=Path, default=config.EVAL_DATASET_DIRS["pick"],
                         help="学習に使ったデータセット（学習データの表示・近さ・最近傍リプレイに使う。無ければ使わない）")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--selftest", action="store_true", help="操作をイベントで送って 1 エピソード実行し、終了する（動作確認用）")
     parser.add_argument("--screenshot", type=Path, default=None, help="--selftest の最後に画面の写し（上面図・映像・情報欄）を保存する")
-    args = parser.parse_args()
+
+
+def run(args) -> int:
     if not (args.policy_path / "model.safetensors").exists():
         sys.exit(f"{args.policy_path} にモデルが無い")
     root = tk.Tk()
@@ -558,7 +548,4 @@ def main() -> None:
     if args.selftest:
         selftest(app, root, args.screenshot)
     root.mainloop()
-
-
-if __name__ == "__main__":
-    main()
+    return 0

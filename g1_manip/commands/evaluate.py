@@ -1,14 +1,14 @@
 """学習済み ACT 方策をシミュレーションで動かし、成功率を出す（フェーズ7）。
 
-    python scripts/06_eval_policy.py                                   # 既定のモデルで 50 エピソード（リーチング）
-    python scripts/06_eval_policy.py --task pick                       # ピック＆プレース（既定のモデルは act_g1_pick_v1）
-    python scripts/06_eval_policy.py --task pick --cube 0.30 -0.15 10 --target 0.28 0.0 --episodes 1 --video outputs/pick.mp4
-                                                                       # キューブ（x, y [m], yaw [deg]）と目標（x, y）を指定して置く
-    python scripts/06_eval_policy.py --policy-path outputs/<RUN_NAME>/pretrained_model
-    python scripts/06_eval_policy.py --n-action-steps 10                # チャンクのうち 10 個だけ実行して予測し直す
-    python scripts/06_eval_policy.py --temporal-ensemble 0.01           # 毎ステップ予測し、重なった予測を平均する
-    python scripts/06_eval_policy.py --episodes 5 --video outputs/eval.mp4
-    mjpython scripts/06_eval_policy.py --view --episodes 3              # ビューアで表示
+    python -m g1_manip eval                                  # 既定のモデルで 50 エピソード（リーチング）
+    python -m g1_manip eval --task pick                      # ピック＆プレース（既定のモデルは act_g1_pick_v1）
+    python -m g1_manip eval --task pick --cube 0.30 -0.15 10 --target 0.28 0.0 --episodes 1 --video outputs/pick.mp4
+                                                             # キューブ（x, y [m], yaw [deg]）と目標（x, y）を指定して置く
+    python -m g1_manip eval --policy-path outputs/<RUN_NAME>/pretrained_model
+    python -m g1_manip eval --n-action-steps 10              # チャンクのうち 10 個だけ実行して予測し直す
+    python -m g1_manip eval --temporal-ensemble 0.01         # 毎ステップ予測し、重なった予測を平均する
+    python -m g1_manip eval --episodes 5 --video outputs/eval.mp4
+    mjpython -m g1_manip eval --view --episodes 3            # ビューアで表示
 
 - 評価の乱数シードは EVAL_SEED_BASE + i（学習データの生成に使ったシードと重ならないことを確かめる）
 - 実行前に、モデルの観測キー・次元が環境の観測と一致するか、モデルの正規化統計が学習データの meta/stats.json と
@@ -22,7 +22,6 @@
 - 成功率がタスクの EVAL_MIN_SUCCESS_RATES 以上なら終了コード 0、未満なら 1
 """
 
-import argparse
 import json
 import sys
 import time
@@ -30,59 +29,45 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
 from lerobot.utils.constants import IMAGENET_STATS
 from safetensors.torch import load_file
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g1_manip import config, dataset  # noqa: E402
-from g1_manip.pick_analysis import ENV_KEY, TrainingNeighbors, state_dataset  # noqa: E402
-from g1_manip.env import PickPlaceEnv, ReachEnv  # noqa: E402
+from g1_manip import config, dataset, viewer
+from g1_manip.env import PickPlaceEnv, ReachEnv
+from g1_manip.policy import condition_name, load_policy, make_actor, obs_to_batch, pick_device
+from g1_manip.rollout import PICK_FAILURES, rollout, task_metrics
+from g1_manip.training_data import ENV_KEY, TrainingNeighbors, state_dataset
+from g1_manip.video import VideoWriter
 
 TASKS = {"reach": (ReachEnv, config.REACH_EPISODE_STEPS), "pick": (PickPlaceEnv, config.PICK_EPISODE_STEPS)}
-# ピック＆プレースの失敗の内訳（pick_failure が返す値）
-PICK_FAILURES = {"not_lifted": "持ち上げていない", "misplaced": "置き位置のずれ", "not_flat": "平らに置けていない",
-                 "moving": "静止していない", "hand_contact": "手が触れたまま"}
 # std の下限（STATS_STD_FLOOR）を確かめる正規化統計のキー（画像はチャンネルごとの統計で、下限は付けない）
 FLOOR_KEYS = ("observation.state", "observation.environment_state", "action")
 
 
-def pick_device(name: str) -> str:
-    if name != "auto":
-        return name
-    return "mps" if torch.backends.mps.is_available() else "cpu"
-
-
-def load_policy(path: Path, device: str, n_action_steps: int | None, te_coeff: float | None):
-    """モデルと前処理・後処理を読み込む。推論の条件（n_action_steps・temporal ensembling）はここで上書きする。"""
-    cfg = PreTrainedConfig.from_pretrained(path)
-    cfg.device = device
-    if te_coeff is not None:
-        cfg.temporal_ensemble_coeff = te_coeff
-        cfg.n_action_steps = 1  # temporal ensembling は毎ステップ予測する
-    elif n_action_steps is not None:
-        cfg.n_action_steps = n_action_steps
-    if not 1 <= cfg.n_action_steps <= cfg.chunk_size:
-        sys.exit(f"--n-action-steps は 1〜chunk_size（{cfg.chunk_size}）で指定する")
-    policy = ACTPolicy.from_pretrained(path, config=cfg)
-    policy.eval()
-    # Colab で学習したモデルは前処理の device が cuda になっているので、推論するデバイスに上書きする
-    pre, post = make_pre_post_processors(cfg, pretrained_path=str(path),
-                                         preprocessor_overrides={"device_processor": {"device": device}})
-    return policy, pre, post, cfg
-
-
-def obs_to_batch(obs: dict, input_features) -> dict[str, torch.Tensor]:
-    """環境の観測から、モデルの入力にあるキーだけをテンソルにする。画像（H, W, 3）uint8 は、学習データを読み込んだときと
-    同じ float32 (3, H, W)、0〜1 にする（LeRobotDataset は PNG をこの形で返す）。"""
-    batch = {}
-    for k in input_features:
-        v = torch.from_numpy(obs[k])
-        batch[k] = v.permute(2, 0, 1).float() / 255 if v.dtype == torch.uint8 else v
-    return batch
+def add_arguments(parser) -> None:
+    parser.add_argument("--task", choices=sorted(TASKS), default="reach")
+    parser.add_argument("--policy-path", type=Path, default=None,
+                        help="pretrained_model フォルダ（config.json, model.safetensors, policy_*processor* がある）。"
+                             "既定: タスクごとの EVAL_POLICY_DIRS")
+    parser.add_argument("--dataset-root", type=Path, default=None,
+                        help="学習に使ったデータセット（正規化統計とシードの照合用。無ければ照合を飛ばす）。"
+                             "既定: タスクごとの EVAL_DATASET_DIRS")
+    parser.add_argument("--episodes", type=int, default=config.EVAL_EPISODES)
+    parser.add_argument("--seed", type=int, default=config.EVAL_SEED_BASE, help="最初のエピソードの乱数シード")
+    parser.add_argument("--device", default="auto", help="auto（MPS があれば mps、無ければ cpu）/ mps / cpu")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--n-action-steps", type=int, default=None,
+                       help="1 回の予測（chunk_size 個）のうち実際に実行する個数（既定: 学習時の設定）")
+    group.add_argument("--temporal-ensemble", type=float, default=None, metavar="COEFF",
+                       help="temporal ensembling の係数（ACT 論文は 0.01）。n_action_steps は 1 になる")
+    parser.add_argument("--video", type=Path, default=None, help="mp4 の保存先（全エピソードを続けて録る）")
+    parser.add_argument("--view", action="store_true", help="ビューアで表示（mjpython で実行すること）")
+    parser.add_argument("--cube", type=float, nargs=3, default=None, metavar=("X", "Y", "YAW_DEG"),
+                        help="pick のみ: キューブを置く位置 [m] と yaw [deg]（全エピソード同じ。ロボットの初期姿勢はシードで変わる）")
+    parser.add_argument("--target", type=float, nargs=2, default=None, metavar=("X", "Y"),
+                        help="pick のみ: 目標の位置 [m]（全エピソード同じ）")
+    parser.add_argument("--out", type=Path, default=None, help="結果の JSON（既定: モデルのフォルダの隣の eval_<task>_<条件>_<N>ep.json）")
 
 
 def model_norm_stats(path: Path, keys) -> dict[str, dict[str, np.ndarray]]:
@@ -167,146 +152,38 @@ def preflight(env, cfg, policy_path: Path, dataset_root: Path, seeds: list[int])
         print("⚠️ 照合に NG がある。学習に使ったデータとモデルの組み合わせを確かめること（評価は続ける）")
 
 
-class VideoWriter:
-    """mujoco.Renderer で描いた画像を mp4（H.264）に書き出す。"""
-
-    def __init__(self, path: Path, model):
-        import av
-        import mujoco
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.renderer = mujoco.Renderer(model, height=config.VIDEO_HEIGHT, width=config.VIDEO_WIDTH)
-        self.camera = mujoco.MjvCamera()
-        mujoco.mjv_defaultFreeCamera(model, self.camera)
-        self.camera.lookat[:] = config.VIDEO_LOOKAT
-        self.camera.distance = config.VIDEO_DISTANCE
-        self.camera.azimuth = config.VIDEO_AZIMUTH
-        self.camera.elevation = config.VIDEO_ELEVATION
-        self.container = av.open(str(path), mode="w")
-        self.stream = self.container.add_stream("libx264", rate=config.FPS)
-        self.stream.width, self.stream.height = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-        self.stream.pix_fmt = "yuv420p"
-        self._frame_cls = av.VideoFrame
-
-    def add(self, data) -> None:
-        self.renderer.update_scene(data, camera=self.camera)
-        frame = self._frame_cls.from_ndarray(self.renderer.render(), format="rgb24")
-        self.container.mux(self.stream.encode(frame))
-
-    def close(self) -> None:
-        self.container.mux(self.stream.encode())
-        self.container.close()
-        self.renderer.close()
-
-
-def pick_failure(env: PickPlaceEnv, max_lift: float) -> str | None:
-    """失敗の内訳（成功なら None）。持ち上げていなければ not_lifted、それ以外は PickPlaceEnv.is_success() の条件のうち
-    最初に満たしていないもの。"""
-    if env.is_success():
-        return None
-    if max_lift < config.PICK_EVAL_LIFTED_MIN:
-        return "not_lifted"
-    if env.place_error() > config.PICK_SUCCESS_TOL:
-        return "misplaced"
-    if abs(env.cube_pos()[2] - (env.table_top_z + config.CUBE_HALF)) > config.PICK_SUCCESS_Z_TOL:
-        return "not_flat"
-    if env.cube_speed() > config.SUCCESS_SPEED_TOL:
-        return "moving"
-    return "hand_contact"
-
-
-def task_metrics(env, max_lift: float) -> dict:
-    """タスクごとの最終状態。final_error_m はリーチングなら手のひらと目標点の距離、ピック＆プレースならキューブと目標の xy 距離。"""
-    if isinstance(env, PickPlaceEnv):
-        cube = env.cube_pos()
-        return {
-            "target": env.target.round(4).tolist(),
-            "final_error_m": env.place_error(),
-            "cube_final": cube.round(4).tolist(),
-            "cube_z_error_m": float(cube[2] - (env.table_top_z + config.CUBE_HALF)),
-            "cube_speed_mps": env.cube_speed(),
-            "hand_contacts": sorted(env.hand_cube_contacts()),
-            "max_lift_m": max_lift,
-            "failure": pick_failure(env, max_lift),
-        }
-    return {
-        "goal": env.goal.round(4).tolist(),
-        "final_error_m": float(np.linalg.norm(env.palm_pos() - env.goal)),
-        "final_speed_mps": env.palm_speed(),
-    }
-
-
-@torch.inference_mode()
-def run_episode(env, policy, pre, post, seed: int, n_steps: int, on_step=None, place: dict | None = None,
+def run_episode(env, policy, act, seed: int, n_steps: int, on_step=None, place: dict | None = None,
                 neighbors: TrainingNeighbors | None = None) -> dict:
     """place: PickPlaceEnv.reset に渡す配置の指定（cube, target）。neighbors があれば初期配置に最も近い学習エピソードを調べる。"""
     obs = env.reset(seed, **(place or {}))
     policy.reset()  # 行動チャンクのキュー（temporal ensembling なら重ね合わせの途中結果）を空にする
-    pick = isinstance(env, PickPlaceEnv)
     start = {}
-    if pick:
+    if isinstance(env, PickPlaceEnv):
         cube0, quat0 = env.cube_pos(), env.cube_quat()
         start = {"cube_start": cube0.round(4).tolist(),
                  "cube_start_yaw_deg": float(np.rad2deg(2 * np.arctan2(quat0[3], quat0[0])))}
         if neighbors is not None:
             start["train_nn"] = neighbors.nearest(obs[ENV_KEY])
-    max_lift = 0.0  # キューブ中心の高さの最大値と初期の高さの差（ピック＆プレースのみ）
-    actions = []
-    infer_s = []
-    for _ in range(n_steps):
-        t0 = time.perf_counter()
-        batch = pre(obs_to_batch(obs, policy.config.input_features))
-        action = post(policy.select_action(batch)).squeeze(0).numpy()
-        infer_s.append(time.perf_counter() - t0)
-        actions.append(action)
-        obs = env.step(action)
-        if pick:
-            max_lift = max(max_lift, float(env.cube_pos()[2] - cube0[2]))
-        if on_step is not None:
-            on_step()
+    r = rollout(env, act, n_steps, obs, on_step)
     # 制御ステップ間の行動の跳び（右腕7関節の最大）。チャンクの切り替わりでカクつくかの目安
-    jumps = np.abs(np.diff(np.stack(actions)[:, :len(config.RIGHT_ARM_JOINTS)], axis=0)).max(axis=1)
+    jumps = np.abs(np.diff(r["actions"][:, :len(config.RIGHT_ARM_JOINTS)], axis=0)).max(axis=1)
     return {
         "seed": seed,
         "success": bool(env.is_success()),
         **start,
-        **task_metrics(env, max_lift),
+        **task_metrics(env, r.get("max_lift", 0.0)),
         "max_action_jump_rad": float(jumps.max()),
         "max_action_jump_step": int(jumps.argmax()) + 1,
-        "infer_ms_per_step": 1000 * float(np.mean(infer_s)),
-        "infer_ms_max": 1000 * max(infer_s),  # 予測するステップの重さ（n_action_steps > 1 では平均に埋もれる）
+        "infer_ms_per_step": 1000 * float(np.mean(r["infer_s"])),
+        "infer_ms_max": 1000 * max(r["infer_s"]),  # 予測するステップの重さ（n_action_steps > 1 では平均に埋もれる）
     }
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--task", choices=sorted(TASKS), default="reach")
-    parser.add_argument("--policy-path", type=Path, default=None,
-                        help="pretrained_model フォルダ（config.json, model.safetensors, policy_*processor* がある）。"
-                             "既定: タスクごとの EVAL_POLICY_DIRS")
-    parser.add_argument("--dataset-root", type=Path, default=None,
-                        help="学習に使ったデータセット（正規化統計とシードの照合用。無ければ照合を飛ばす）。"
-                             "既定: タスクごとの EVAL_DATASET_DIRS")
-    parser.add_argument("--episodes", type=int, default=config.EVAL_EPISODES)
-    parser.add_argument("--seed", type=int, default=config.EVAL_SEED_BASE, help="最初のエピソードの乱数シード")
-    parser.add_argument("--device", default="auto", help="auto（MPS があれば mps、無ければ cpu）/ mps / cpu")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--n-action-steps", type=int, default=None,
-                       help="1 回の予測（chunk_size 個）のうち実際に実行する個数（既定: 学習時の設定）")
-    group.add_argument("--temporal-ensemble", type=float, default=None, metavar="COEFF",
-                       help="temporal ensembling の係数（ACT 論文は 0.01）。n_action_steps は 1 になる")
-    parser.add_argument("--video", type=Path, default=None, help="mp4 の保存先（全エピソードを続けて録る）")
-    parser.add_argument("--view", action="store_true", help="ビューアで表示（mjpython で実行すること）")
-    parser.add_argument("--cube", type=float, nargs=3, default=None, metavar=("X", "Y", "YAW_DEG"),
-                        help="pick のみ: キューブを置く位置 [m] と yaw [deg]（全エピソード同じ。ロボットの初期姿勢はシードで変わる）")
-    parser.add_argument("--target", type=float, nargs=2, default=None, metavar=("X", "Y"),
-                        help="pick のみ: 目標の位置 [m]（全エピソード同じ）")
-    parser.add_argument("--out", type=Path, default=None, help="結果の JSON（既定: モデルのフォルダの隣の eval_<task>_<条件>_<N>ep.json）")
-    args = parser.parse_args()
+def run(args) -> int:
     if args.episodes < 1:
-        parser.error("--episodes は 1 以上")
+        sys.exit("--episodes は 1 以上")
     if (args.cube or args.target) and args.task != "pick":
-        parser.error("--cube / --target は --task pick のときだけ使える")
+        sys.exit("--cube / --target は --task pick のときだけ使える")
     place = {k: v for k, v in (("cube", args.cube), ("target", args.target)) if v is not None}
 
     policy_path = (args.policy_path or config.EVAL_POLICY_DIRS[args.task]).resolve()
@@ -316,15 +193,17 @@ def main() -> None:
     seeds = [args.seed + i for i in range(args.episodes)]
 
     device = pick_device(args.device)
-    policy, pre, post, cfg = load_policy(policy_path, device, args.n_action_steps, args.temporal_ensemble)
+    try:
+        policy, pre, post, cfg = load_policy(policy_path, device, args.n_action_steps, args.temporal_ensemble)
+    except ValueError as e:
+        sys.exit(str(e))
     images = config.IMAGE_KEY in cfg.input_features
     if images and args.task != "pick":
         sys.exit("画像入力のモデルはピック＆プレース（--task pick）だけ")
     dataset_root = args.dataset_root or (config.EVAL_IMAGE_DATASET_DIR if images else config.EVAL_DATASET_DIRS[args.task])
     env_cls, n_steps = TASKS[args.task]
     env = env_cls(images=True) if images else env_cls()
-    cond = (f"te{cfg.temporal_ensemble_coeff:g}" if cfg.temporal_ensemble_coeff is not None
-            else f"n{cfg.n_action_steps}")
+    cond = condition_name(cfg)
     print(f"モデル {policy_path}（device {device}, chunk_size {cfg.chunk_size}, n_action_steps {cfg.n_action_steps}, "
           f"temporal_ensemble_coeff {cfg.temporal_ensemble_coeff}）")
     preflight(env, cfg, policy_path, dataset_root, seeds)
@@ -345,31 +224,26 @@ def main() -> None:
         print(f"配置の指定: {place}（範囲・キューブと目標の距離の制約は確かめない。学習データの範囲は "
               f"キューブ x {config.PICK_CUBE_X} y {config.PICK_CUBE_Y} yaw ±{config.PICK_CUBE_YAW_DEG:g}°, "
               f"目標 x {config.PICK_TARGET_X} y {config.PICK_TARGET_Y}）")
+    act = make_actor(policy, pre, post)
     # 1 回空で推論しておく（MPS は最初の呼び出しだけ準備に 100ms 以上かかり、推論時間の最大値がそれになるため）
     with torch.inference_mode():
         policy.select_action(pre(obs_to_batch(env.reset(seeds[0]), cfg.input_features)))
 
-    viewer = None
-    if args.view:  # 動画より先に開く（mjpython 以外で失敗したとき、開いた動画ファイルを残さない）
-        from mujoco import viewer as mj_viewer
-        viewer = mj_viewer.launch_passive(env.model, env.data)
+    # ビューアは動画より先に開く（mjpython 以外で失敗したとき、開いた動画ファイルを残さない）
+    v = viewer.launch(env.model, env.data) if args.view else None
     video = VideoWriter(args.video, env.model) if args.video else None
 
     def on_step():
         if video is not None:
             video.add(env.data)
-        if viewer is not None:
-            if not viewer.is_running():
-                sys.exit("ビューアが閉じられたため中断しました。")
-            t0 = time.time()
-            viewer.sync()
-            time.sleep(max(0.0, 1.0 / config.CONTROL_HZ - (time.time() - t0)))
+        if v is not None:
+            viewer.sync(v, 1.0 / config.CONTROL_HZ)
 
     results = []
     t_start = time.time()
     try:
         for ep, seed in enumerate(seeds):
-            r = run_episode(env, policy, pre, post, seed, n_steps, on_step, place, neighbors)
+            r = run_episode(env, policy, act, seed, n_steps, on_step, place, neighbors)
             results.append(r)
             jump = f"行動の跳び 最大 {r['max_action_jump_rad']:.3f}rad（ステップ {r['max_action_jump_step']}）"
             if args.task == "pick":
@@ -389,8 +263,8 @@ def main() -> None:
     finally:
         if video is not None:
             video.close()
-        if viewer is not None:
-            viewer.close()
+        if v is not None:
+            v.close()
 
     n_ok = sum(r["success"] for r in results)
     rate = n_ok / len(results)
@@ -432,8 +306,5 @@ def main() -> None:
     print(f"結果を保存: {out}")
     if video is not None:
         print(f"動画を保存: {args.video}")
-    sys.exit(0 if rate >= min_rate else 1)
+    return 0 if rate >= min_rate else 1
 
-
-if __name__ == "__main__":
-    main()

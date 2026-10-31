@@ -1,11 +1,11 @@
 """ピック＆プレースの学習済み方策を、学習データ・教師（スクリプト方策）と比べる（フェーズ7の追加分析）。
 
-    python scripts/07_analyze_pick.py dist                         # 学習データと評価の初期配置の分布・近さ
-    python scripts/07_analyze_pick.py traj                         # 方策の軌跡を教師・最も近い学習エピソードと比べる（50 シード）
-    python scripts/07_analyze_pick.py traj --temporal-ensemble 0.01
-    python scripts/07_analyze_pick.py grid --with-scripted         # キューブの位置を格子状に振って成功マップを作る
+    python -m g1_manip analyze dist                      # 学習データと評価の初期配置の分布・近さ
+    python -m g1_manip analyze traj                      # 方策の軌跡を教師・最も近い学習エピソードと比べる（50 シード）
+    python -m g1_manip analyze traj --temporal-ensemble 0.01
+    python -m g1_manip analyze grid --with-scripted      # キューブの位置を格子状に振って成功マップを作る
 
-- dist: 学習データ 200 本の初期配置（キューブ xy・yaw・目標 xy）と、06_eval_policy.py の結果 JSON の初期配置を並べ、
+- dist: 学習データ 200 本の初期配置（キューブ xy・yaw・目標 xy）と、eval の結果 JSON の初期配置を並べ、
   各評価エピソードに最も近い学習エピソードとの距離（正規化した environment_state の距離・キューブ xy の距離）を出す
 - traj: 評価シードごとに (1) 方策の推論 (2) 同じシードの教師（スクリプト方策、＝その配置での正解の軌跡）
   (3) 最近傍リプレイ（初期配置が最も近い学習エピソードの行動列を、その配置でそのまま再生する。方策が学習データを
@@ -17,8 +17,6 @@
 - 出力はモデルのフォルダの隣の analysis/（図 PNG・結果 JSON・軌跡 npz）。--out-dir で変えられる
 """
 
-import argparse
-import importlib.util
 import json
 import sys
 import time
@@ -29,20 +27,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-import torch  # noqa: E402
 from matplotlib.patches import Circle, Rectangle  # noqa: E402
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from g1_manip import config  # noqa: E402
-from g1_manip import pick_analysis as pa  # noqa: E402
+from g1_manip import training_data as td  # noqa: E402
 from g1_manip.env import PickPlaceEnv  # noqa: E402
+from g1_manip.policy import condition_name, load_policy, make_actor, needs_images, pick_device  # noqa: E402
+from g1_manip.rollout import PICK_FAILURES, pick_failure, rollout  # noqa: E402
 from g1_manip.scripted import ScriptedPickPlacePolicy  # noqa: E402
-
-# モデルの読み込み・失敗の分類は評価スクリプトと同じものを使う（ファイル名が数字で始まるので import 文では読めない）
-_spec = importlib.util.spec_from_file_location("eval_policy", Path(__file__).with_name("06_eval_policy.py"))
-ev = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(ev)
-
 
 
 def _seg_end(last: str) -> int:
@@ -95,7 +87,7 @@ def setup_topview(ax, title: str, target_range: bool = True) -> None:
 # dist
 # ---------------------------------------------------------------------------
 def cmd_dist(args, policy_path: Path) -> None:
-    nb = pa.TrainingNeighbors(args.dataset_root)
+    nb = td.TrainingNeighbors(args.dataset_root)
     tr = nb.env0
     ref = nb.self_nn()
     tr_xy_nn = np.linalg.norm(tr[:, None, :2] - tr[None, :, :2], axis=2)
@@ -103,7 +95,7 @@ def cmd_dist(args, policy_path: Path) -> None:
     out_dir = args.out_dir or policy_path.parent / "analysis"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 既定では 06_eval_policy.py をシードどおりの配置で回した結果だけを使う（--cube / --target を付けた結果は除く）
+    # 既定では eval をシードどおりの配置で回した結果だけを使う（--cube / --target を付けた結果は除く）
     evals = args.evals or [p for p in sorted(policy_path.parent.glob("eval_pick_*_50ep.json"))
                            if not json.loads(p.read_text())["summary"].get("place")]
     report = {"dataset": str(args.dataset_root), "train_episodes": len(tr),
@@ -156,7 +148,7 @@ def cmd_dist(args, policy_path: Path) -> None:
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=2, fontsize=7.5)
     ax = axes[1]
     ax.set_title("(b) キューブの初期位置の x と yaw", loc="left")
-    ax.scatter(tr[:, 0], pa.cube_yaw_deg(tr), s=10, c=C_TRAIN, label="学習データ")
+    ax.scatter(tr[:, 0], td.cube_yaw_deg(tr), s=10, c=C_TRAIN, label="学習データ")
     yaw = np.array([r["yaw_deg"] for r in rows])
     ax.scatter(cx[ok], yaw[ok], s=36, c=C_OK, ec="white", lw=0.8, label="評価: 方策が成功")
     ax.scatter(cx[~ok], yaw[~ok], s=46, c=C_NG, marker="X", ec="white", lw=0.6, label="評価: 方策が失敗")
@@ -189,50 +181,43 @@ def cmd_dist(args, policy_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # traj / grid 共通
 # ---------------------------------------------------------------------------
-def rollout(env: PickPlaceEnv, act, n_steps: int) -> dict:
-    """env はリセット済み。act(obs) -> 行動 で n_steps 進め、各ステップの観測時点の関節角とキューブの位置を記録する。"""
-    obs = env.observation()
-    cube0 = env.cube_pos()
-    states, cubes, max_lift = [], [], 0.0
-    for _ in range(n_steps):
-        states.append(obs[pa.STATE_KEY].astype(np.float64))
-        cubes.append(env.cube_pos())
-        obs = env.step(act(obs))
-        max_lift = max(max_lift, float(env.cube_pos()[2] - cube0[2]))
-    return {"states": np.array(states), "cube": np.array(cubes), "success": bool(env.is_success()),
-            "failure": ev.pick_failure(env, max_lift), "place_error_m": env.place_error(), "max_lift_m": max_lift}
+def run_pick(env: PickPlaceEnv, act, n_steps: int) -> dict:
+    """env はリセット済み。act(obs) -> 行動 で n_steps 進め、各ステップの観測時点の関節角とキューブの位置、終わった時点の結果を返す。"""
+    r = rollout(env, act, n_steps)
+    return {"states": r["states"], "cube": r["cube"], "success": bool(env.is_success()),
+            "failure": pick_failure(env, r["max_lift"]), "place_error_m": env.place_error(), "max_lift_m": r["max_lift"]}
 
 
 class Runner:
     """方策と教師を同じ配置で動かす。"""
 
     def __init__(self, args, policy_path: Path):
-        self.env = PickPlaceEnv()
-        self.device = ev.pick_device(args.device)
-        self.policy, self.pre, self.post, cfg = ev.load_policy(policy_path, self.device, args.n_action_steps,
-                                                               args.temporal_ensemble)
-        self.cond = (f"te{cfg.temporal_ensemble_coeff:g}" if cfg.temporal_ensemble_coeff is not None
-                     else f"n{cfg.n_action_steps}")
+        # モデルの入力に画像があれば、観測に頭部カメラの画像を入れる環境にする
+        self.env = PickPlaceEnv(images=needs_images(policy_path))
+        try:
+            self.policy, pre, post, cfg = load_policy(policy_path, pick_device(args.device), args.n_action_steps,
+                                                      args.temporal_ensemble)
+        except ValueError as e:
+            sys.exit(str(e))
+        self.act = make_actor(self.policy, pre, post)
+        self.cond = condition_name(cfg)
         self.teacher = ScriptedPickPlacePolicy(self.env)
 
-    @torch.inference_mode()
     def policy_rollout(self, seed: int, place: dict) -> dict:
         self.env.reset(seed, **place)
         self.policy.reset()
-        to_t = lambda o: {k: torch.from_numpy(v) for k, v in o.items()}  # noqa: E731
-        return rollout(self.env, lambda o: self.post(self.policy.select_action(self.pre(to_t(o)))).squeeze(0).numpy(),
-                       config.PICK_EPISODE_STEPS)
+        return run_pick(self.env, self.act, config.PICK_EPISODE_STEPS)
 
     def replay_rollout(self, seed: int, place: dict, actions: np.ndarray) -> dict:
         """学習エピソードの行動列（絶対目標角）を、観測を見ずにそのまま再生する。"""
         self.env.reset(seed, **place)
         it = iter(actions)
-        return rollout(self.env, lambda o: next(it), len(actions))
+        return run_pick(self.env, lambda o: next(it), len(actions))
 
     def teacher_rollout(self, seed: int, place: dict) -> dict:
         self.env.reset(seed, **place)
         self.teacher.reset()
-        r = rollout(self.env, lambda o: self.teacher.act(), config.PICK_EPISODE_STEPS)
+        r = run_pick(self.env, lambda o: self.teacher.act(), config.PICK_EPISODE_STEPS)
         r["teacher_feasible"] = bool(self.teacher.feasible)
         return r
 
@@ -263,24 +248,24 @@ def cmd_traj(args, policy_path: Path) -> None:
         plot_traj(res["episodes"], palms, res["summary"]["condition"], args.replot.parent, args.examples)
         return
     run = Runner(args, policy_path)
-    nb = pa.TrainingNeighbors(args.dataset_root)
+    nb = td.TrainingNeighbors(args.dataset_root)
     env = run.env
     seeds = [args.seed + i for i in range(args.episodes)]
     out_dir = args.out_dir or policy_path.parent / "analysis"
     out_dir.mkdir(parents=True, exist_ok=True)
-    train_palms = np.stack([pa.palm_positions(env, st) for st in nb.episodes[pa.STATE_KEY]])  # (エピソード数, T, 3)
+    train_palms = np.stack([td.palm_positions(env, st) for st in nb.episodes[td.STATE_KEY]])  # (エピソード数, T, 3)
     rows, palms = [], {}
     t0 = time.time()
     for seed in seeds:
         obs0 = env.reset(seed)
         target = env.target.copy()
-        nn = nb.nearest(obs0[pa.ENV_KEY])
+        nn = nb.nearest(obs0[td.ENV_KEY])
         pol = run.policy_rollout(seed, {})
         tea = run.teacher_rollout(seed, {})
-        p_pol = pa.palm_positions(env, pol["states"])
-        p_tea = pa.palm_positions(env, tea["states"])
+        p_pol = td.palm_positions(env, pol["states"])
+        p_tea = td.palm_positions(env, tea["states"])
         rep = run.replay_rollout(seed, {}, nb.episodes["action"][nn["train_row"]])
-        p_rep = pa.palm_positions(env, rep["states"])
+        p_rep = td.palm_positions(env, rep["states"])
         p_nn = train_palms[nn["train_row"]]
         best = best_train(train_palms, p_tea)
         d_rt = np.linalg.norm(p_rep - p_tea, axis=1)
@@ -290,7 +275,7 @@ def cmd_traj(args, policy_path: Path) -> None:
         # 右腕 7 関節の角度の差（RMS over joints）
         arm = slice(0, len(config.RIGHT_ARM_JOINTS))
         j_pt = np.sqrt(((pol["states"][:, arm] - tea["states"][:, arm]) ** 2).mean(1))
-        j_pn = np.sqrt(((pol["states"][:, arm] - nb.episodes[pa.STATE_KEY][nn["train_row"]][:, arm]) ** 2).mean(1))
+        j_pn = np.sqrt(((pol["states"][:, arm] - nb.episodes[td.STATE_KEY][nn["train_row"]][:, arm]) ** 2).mean(1))
         row = {"seed": seed, "policy_success": pol["success"], "policy_failure": pol["failure"],
                "policy_place_error_m": pol["place_error_m"], "teacher_success": tea["success"],
                "teacher_feasible": tea["teacher_feasible"], "train_nn": nn,
@@ -327,7 +312,7 @@ def cmd_traj(args, policy_path: Path) -> None:
                "policy_success": sum(r["policy_success"] for r in rows),
                "teacher_success": sum(r["teacher_success"] for r in rows),
                "replay_success": sum(r["replay_success"] for r in rows),
-               "replay_failures": {k: sum(r["replay_failure"] == k for r in rows) for k in ev.PICK_FAILURES},
+               "replay_failures": {k: sum(r["replay_failure"] == k for r in rows) for k in PICK_FAILURES},
                "closer_to_teacher": sum(r["closer_to_teacher"] for r in rows),
                "closer_to_teacher_success_only": sum(r["closer_to_teacher"] for r in rows if ok(r)),
                "beats_best_train_hold": sum(r["beats_best_train_hold"] for r in rows),
@@ -385,8 +370,8 @@ def plot_traj(rows, palms, cond, out_dir: Path, examples) -> None:
     for j, s in enumerate(examples):
         r, p = by_seed[s], palms[s]
         ax = axes[0, j]
-        status = "成功" if r["policy_success"] else f"失敗（{ev.PICK_FAILURES[r['policy_failure']]}）"
-        rstat = "成功" if r["replay_success"] else f"失敗（{ev.PICK_FAILURES[r['replay_failure']]}）"
+        status = "成功" if r["policy_success"] else f"失敗（{PICK_FAILURES[r['policy_failure']]}）"
+        rstat = "成功" if r["replay_success"] else f"失敗（{PICK_FAILURES[r['replay_failure']]}）"
         ax.set_title(f"seed {s}\n方策 {status}\nリプレイ {rstat}\n（学習 ep {r['train_nn']['train_episode']}、"
                      f"正規化距離 {r['train_nn']['dist_norm']:.2f}）", loc="left", fontsize=8.5)
         ax.invert_xaxis()
@@ -471,10 +456,10 @@ def frange(lo: float, hi: float, step: float) -> np.ndarray:
 def cmd_grid(args, policy_path: Path) -> None:
     if args.replot:  # 保存した結果（JSON）から図だけ描き直す
         res = json.loads(args.replot.read_text())
-        plot_grid(res["summary"], res["cells"], pa.TrainingNeighbors(args.dataset_root).env0, args.replot.with_suffix(".png"))
+        plot_grid(res["summary"], res["cells"], td.TrainingNeighbors(args.dataset_root).env0, args.replot.with_suffix(".png"))
         return
     run = Runner(args, policy_path)
-    nb = pa.TrainingNeighbors(args.dataset_root)
+    nb = td.TrainingNeighbors(args.dataset_root)
     xs, ys = frange(*args.x), frange(*args.y)
     out_dir = args.out_dir or policy_path.parent / "analysis"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -487,7 +472,7 @@ def cmd_grid(args, policy_path: Path) -> None:
         for y in ys:
             place = {"cube": (float(x), float(y), args.yaw), "target": tuple(args.target)}
             obs0 = run.env.reset(args.seed, **place)
-            nn = nb.nearest(obs0[pa.ENV_KEY])
+            nn = nb.nearest(obs0[td.ENV_KEY])
             pol = run.policy_rollout(args.seed, place)
             cell = {"x": float(x), "y": float(y), "policy_success": pol["success"], "policy_failure": pol["failure"],
                     "policy_place_error_m": pol["place_error_m"], "policy_max_lift_m": pol["max_lift_m"],
@@ -576,8 +561,7 @@ def plot_grid(summary: dict, cells: list[dict], tr: np.ndarray, png: Path) -> No
     print(f"図を保存: {png}")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def add_arguments(parser) -> None:
     parser.add_argument("--policy-path", type=Path, default=config.EVAL_POLICY_DIRS["pick"])
     parser.add_argument("--dataset-root", type=Path, default=config.EVAL_DATASET_DIRS["pick"])
     parser.add_argument("--device", default="auto")
@@ -586,7 +570,7 @@ def main() -> None:
 
     p = sub.add_parser("dist", help="学習データと評価の初期配置の分布・近さ")
     p.add_argument("--evals", type=Path, nargs="*", default=None,
-                   help="06_eval_policy.py の結果 JSON（既定: モデルのフォルダの隣の eval_pick_*_50ep.json）")
+                   help="eval の結果 JSON（既定: モデルのフォルダの隣の eval_pick_*_50ep.json）")
     p.add_argument("--show", default=None, help="図で色分けする評価（JSON のファイル名の stem。既定: 最初の JSON）")
 
     for name, help_ in (("traj", "方策の成功・軌跡を教師・最近傍リプレイと比べる"), ("grid", "キューブの位置を格子状に振る")):
@@ -608,10 +592,9 @@ def main() -> None:
             p.add_argument("--with-scripted", action="store_true", help="同じ配置で教師（スクリプト方策）も動かす")
             p.add_argument("--with-replay", action="store_true", help="同じ配置で最近傍リプレイも動かす")
             p.add_argument("--replot", type=Path, default=None, help="保存した grid_<...>.json から図だけ描き直す")
-    args = parser.parse_args()
+
+
+def run(args) -> int:
     policy_path = args.policy_path.resolve()
     {"dist": cmd_dist, "traj": cmd_traj, "grid": cmd_grid}[args.cmd](args, policy_path)
-
-
-if __name__ == "__main__":
-    main()
+    return 0

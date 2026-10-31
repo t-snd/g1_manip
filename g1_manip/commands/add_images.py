@@ -1,8 +1,8 @@
 """既存のピック＆プレースのデモ（状態のみ）を再生し、頭部カメラの画像を付けたデータセットを作る（フェーズ8）。
 
-    python scripts/05c_add_images.py                         # data/g1_pick_200 → data/g1_pick_img_200
-    python scripts/05c_add_images.py --episodes 5 --dst data/g1_pick_img_test --overwrite   # 試しに 5 本
-    python scripts/05c_add_images.py --check-only            # 作ったデータセットの検証だけ
+    python -m g1_manip add-images                          # data/g1_pick_200 → data/g1_pick_img_200
+    python -m g1_manip add-images --episodes 5 --dst data/g1_pick_img_test --overwrite   # 試しに 5 本
+    python -m g1_manip add-images --check-only             # 作ったデータセットの検証だけ
 
 - 各エピソードを、記録したシードで初期化し、保存した action をそのまま与えて再生する（シミュレーションは決定的）。
   各ステップの観測（行動を与える前）で頭部カメラ（IMAGE_HEIGHT×IMAGE_WIDTH）を描く
@@ -16,7 +16,6 @@
   保存する（描画と保存を同時に行うと CPU を取り合い、保存側（PNG の書き出し・parquet への埋め込み）が 1 本 80 秒ほどに遅くなった）
 """
 
-import argparse
 import json
 import multiprocessing as mp
 import os
@@ -28,10 +27,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g1_manip import config, dataset  # noqa: E402
-from g1_manip import pick_analysis as pa  # noqa: E402
-from g1_manip.env import PickPlaceEnv  # noqa: E402
+from g1_manip import config, dataset
+from g1_manip import training_data as td
+from g1_manip.env import PickPlaceEnv
 
 _env = None  # 描画プロセスごとの環境
 
@@ -49,18 +47,18 @@ def render_episode(job: tuple[int, int, np.ndarray, np.ndarray, np.ndarray]) -> 
     d_state = d_env = 0.0
     for t, action in enumerate(actions):
         d_state = max(d_state, float(np.abs(obs["observation.state"] - states[t]).max()))
-        d_env = max(d_env, float(np.abs(obs[pa.ENV_KEY] - env_states[t]).max()))
+        d_env = max(d_env, float(np.abs(obs[td.ENV_KEY] - env_states[t]).max()))
         images[t] = obs[config.IMAGE_KEY]
         obs = _env.step(action)
     return {"row": row, "images": images, "d_state": d_state, "d_env": d_env, "success": _env.is_success()}
 
 
 def build(args) -> None:
-    src = pa.load_episodes(args.src)
+    src = td.load_episodes(args.src)
     n = len(src["episode_index"]) if args.episodes <= 0 else min(args.episodes, len(src["episode_index"]))
     src_info = dataset.read_generation_info(args.src)
     ds = dataset.create_dataset(args.dst, args.repo_id, None, args.overwrite, image=True, image_writer_threads=4)
-    jobs = [(i, int(src["seeds"][i]), src[pa.STATE_KEY][i], src[pa.ENV_KEY][i], src["action"][i]) for i in range(n)]
+    jobs = [(i, int(src["seeds"][i]), src[td.STATE_KEY][i], src[td.ENV_KEY][i], src["action"][i]) for i in range(n)]
     t0 = time.time()
     worst = {"d_state": 0.0, "d_env": 0.0}
     with mp.get_context("spawn").Pool(args.workers, initializer=_init_worker) as pool:
@@ -75,7 +73,7 @@ def build(args) -> None:
                 sys.exit(f"エピソード {src['episode_index'][i]}（シード {jobs[i][1]}）の再生が元と合わない: "
                          f"関節角の差 {r['d_state']:.2e}, environment_state の差 {r['d_env']:.2e}, 成功 {r['success']}")
             for t in range(len(r["images"])):
-                ds.add_frame({pa.STATE_KEY: src[pa.STATE_KEY][i, t].astype(np.float32),
+                ds.add_frame({td.STATE_KEY: src[td.STATE_KEY][i, t].astype(np.float32),
                               config.IMAGE_KEY: r["images"][t],
                               "action": src["action"][i, t].astype(np.float32),
                               "task": src_info["task_name"]})
@@ -105,13 +103,13 @@ def check(args) -> bool:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     info = dataset.read_generation_info(args.dst)
-    src = pa.load_episodes(args.src)
+    src = td.load_episodes(args.src)
     n = len(info["seeds"])
     files = sorted((args.dst / "data").glob("*/*.parquet"))
-    df = pd.concat([pd.read_parquet(f, columns=[pa.STATE_KEY, "action", "episode_index", "frame_index", "index"])
+    df = pd.concat([pd.read_parquet(f, columns=[td.STATE_KEY, "action", "episode_index", "frame_index", "index"])
                     for f in files]).sort_values("index")
     T = info["episode_steps"]
-    d_state = np.abs(np.stack(df[pa.STATE_KEY].to_numpy()).reshape(n, T, -1) - src[pa.STATE_KEY][:n]).max()
+    d_state = np.abs(np.stack(df[td.STATE_KEY].to_numpy()).reshape(n, T, -1) - src[td.STATE_KEY][:n]).max()
     d_action = np.abs(np.stack(df["action"].to_numpy()).reshape(n, T, -1) - src["action"][:n]).max()
     same_order = (info["source_episode_index"] == [int(e) for e in src["episode_index"][:n]]
                   and info["seeds"] == [int(s) for s in src["seeds"][:n]])
@@ -148,7 +146,7 @@ def check(args) -> bool:
         "フレーム数 = エピソード数 × ステップ数": len(df) == n * T and ds.meta.total_frames == n * T,
         "エピソードの順番・シードが元と同じ": same_order,
         "state・action が元のデータセットと完全に一致": d_state == 0 and d_action == 0,
-        "environment_state が入っていない（画像から推定させる）": pa.ENV_KEY not in ds.meta.features,
+        "environment_state が入っていない（画像から推定させる）": td.ENV_KEY not in ds.meta.features,
         "画像が、その場で再生して描いた同じステップの画像と一致（PNG なので完全一致）": max(d_same) == 0,
         "画像が隣のステップの画像とは違う（1 ステップのずれを検出できる）": min(d_next) > 0,
         "画像の正規化統計（mean・std、チャンネルごと）がある": all(k in img_stats for k in ("mean", "std")),
@@ -158,8 +156,7 @@ def check(args) -> bool:
     return all(checks.values())
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def add_arguments(parser) -> None:
     parser.add_argument("--src", type=Path, default=config.DATA_DIR / "g1_pick_200")
     parser.add_argument("--dst", type=Path, default=config.DATA_DIR / "g1_pick_img_200")
     parser.add_argument("--repo-id", default="local/g1_pick_img")
@@ -168,11 +165,10 @@ def main() -> None:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--check-episodes", type=int, default=10, help="画像を描き直して比べるエピソード数")
-    args = parser.parse_args()
+
+
+def run(args) -> int:
     if not args.check_only:
         build(args)
-    sys.exit(0 if check(args) else 1)
+    return 0 if check(args) else 1
 
-
-if __name__ == "__main__":
-    main()

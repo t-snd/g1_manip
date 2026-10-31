@@ -1,4 +1,4 @@
-"""ピック＆プレースの学習データと推論の比較に使う道具（scripts/06_eval_policy.py・07_analyze_pick.py）。
+"""ピック＆プレースの学習データの読み込みと、評価の初期配置との近さ（eval・analyze・gui・add-images で使う）。
 
 - 学習データは parquet を直接読む（LeRobotDataset で 1 サンプルずつ読むと 9 万フレームで数分かかるため）
 - 「近さ」はモデルが見るのと同じ正規化（meta/stats.json の mean/std）をした environment_state の距離で測る。
@@ -37,7 +37,7 @@ def load_episodes(root: Path) -> dict[str, np.ndarray]:
 
 def state_dataset(root: Path) -> tuple[Path, list[int] | None]:
     """environment_state のあるデータセットと、そのうち root の学習データに入っているエピソード（None なら全部）。
-    画像入力のデータセット（05c_add_images.py で作ったもの。environment_state が無い）なら、g1_generation.json に記録した
+    画像入力のデータセット（add-images で作ったもの。environment_state が無い）なら、g1_generation.json に記録した
     元のデータセット（root の親からの相対パス）と、使ったエピソード（source_episode_index。先頭の一部だけのこともある）を返す。"""
     gen = root / "g1_generation.json"
     if gen.exists() and (src := (info := json.loads(gen.read_text())).get("source_dataset")):

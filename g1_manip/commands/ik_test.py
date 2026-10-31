@@ -1,7 +1,7 @@
 """IK の到達テスト：机上のランダムな点に右手のひらを持っていく（物理シミュレーションで動かす）。
 
-    python scripts/03_ik_reach_test.py            # ビューアなしで実行し、合否を判定
-    mjpython scripts/03_ik_reach_test.py --view   # ビューアで表示しながら実行
+    python -m g1_manip ik-test                # ビューアなしで実行し、合否を判定
+    mjpython -m g1_manip ik-test --view       # ビューアで表示しながら実行
 
 手順:
   - 準備姿勢（手を机の上に上げ、手のひらを下に向けた姿勢）から始める
@@ -14,25 +14,19 @@
 あわせて、ロボットと机・ロボット同士（右腕と胴体など）の接触の有無を報告する。
 """
 
-import argparse
-import sys
-import time
-from pathlib import Path
-
 import mujoco
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g1_manip import config  # noqa: E402
-from g1_manip.env import (  # noqa: E402
-    apply_joint_targets,
-    joint_actuator_ids,
-    load_model,
-    reset_to_ready,
-)
-from g1_manip.ik import RightHandIK  # noqa: E402
+from g1_manip import config, viewer
+from g1_manip.env import apply_joint_targets, joint_actuator_ids, load_model, reset_to_ready
+from g1_manip.ik import RightHandIK
+from g1_manip.scripted import min_jerk
 
 DT = 1.0 / config.CONTROL_HZ
+
+
+def add_arguments(parser) -> None:
+    parser.add_argument("--view", action="store_true", help="ビューアで表示しながら実行（mjpython で実行すること）")
 
 
 def sample_points(rng: np.random.Generator) -> np.ndarray:
@@ -42,15 +36,7 @@ def sample_points(rng: np.random.Generator) -> np.ndarray:
     return np.concatenate([cube, target])
 
 
-def min_jerk(s: float) -> float:
-    return 10 * s ** 3 - 15 * s ** 4 + 6 * s ** 5
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--view", action="store_true", help="ビューアで表示しながら実行（mjpython で実行すること）")
-    args = parser.parse_args()
-
+def run(args) -> int:
     model, data = load_model()
     ik = RightHandIK(model)
     reset_to_ready(model, data, ik)
@@ -67,10 +53,7 @@ def main() -> None:
     robot_root = model.body("pelvis").id
     right_arm_bodies = {model.joint(j).bodyid[0] for j in config.RIGHT_ARM_JOINTS + config.RIGHT_HAND_JOINTS}
 
-    viewer = None
-    if args.view:
-        from mujoco import viewer as mj_viewer
-        viewer = mj_viewer.launch_passive(model, data)
+    v = viewer.launch(model, data) if args.view else None
 
     contacts = set()
     max_ik_err = 0.0
@@ -91,12 +74,8 @@ def main() -> None:
                     r1, r2 = model.body_rootid[b1] == robot_root, model.body_rootid[b2] == robot_root
                     if (r1 != r2 or (r1 and r2)) and (b1 in right_arm_bodies or b2 in right_arm_bodies):
                         contacts.add(f"{model.body(b1).name}<->{model.body(b2).name}")
-            if viewer is not None:
-                if not viewer.is_running():
-                    sys.exit("ビューアが閉じられたため、テストを中断しました。")
-                t0 = time.time()
-                viewer.sync()
-                time.sleep(max(0.0, DT - (time.time() - t0)))
+            if v is not None:
+                viewer.sync(v, DT)
 
     points = sample_points(np.random.default_rng(config.REACH_SEED))
     z_up = table_top + config.REACH_APPROACH_HEIGHT
@@ -131,14 +110,8 @@ def main() -> None:
     print(f"\n  [{'OK' if ok else 'NG'}] {config.REACH_TOL * 100:.0f}cm 以内に到達した点が "
           f"{config.REACH_MIN_SUCCESS}/{len(points)} 点以上")
 
-    if viewer is not None:
-        print("ビューアを閉じると終了します。")
-        while viewer.is_running():
-            viewer.sync()
-            time.sleep(0.05)
-        viewer.close()
-    sys.exit(0 if ok else 1)
+    if v is not None:
+        viewer.wait_until_closed(v)
+        v.close()
+    return 0 if ok else 1
 
-
-if __name__ == "__main__":
-    main()

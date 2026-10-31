@@ -20,4 +20,4 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["g1_manip"]
+packages = ["g1_manip", "g1_manip.commands"]

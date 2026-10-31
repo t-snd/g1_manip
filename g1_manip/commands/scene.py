@@ -1,20 +1,21 @@
-"""シーンを読み込み、ビューアで表示する。
+"""シーンを読み込み、ビューアで表示する（フェーズ2）。
 
-    mjpython scripts/01_view_scene.py              # ビューア（macOS は mjpython 必須）
-    python scripts/01_view_scene.py --headless 5   # ビューアなしで 5 秒シミュレーションして静止を確認
+    mjpython -m g1_manip scene                 # ビューア（macOS は mjpython 必須）
+    python -m g1_manip scene --headless 5      # ビューアなしで 5 秒シミュレーションして静止を確認
 """
 
-import argparse
-import sys
 import time
-from pathlib import Path
 
 import mujoco
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g1_manip import config  # noqa: E402
-from g1_manip.env import load_model  # noqa: E402
+from g1_manip import config
+from g1_manip.env import load_model
+
+
+def add_arguments(parser) -> None:
+    parser.add_argument("--headless", type=float, metavar="SECONDS",
+                        help="ビューアを開かずに指定秒数シミュレーションし、静止を確認する")
 
 
 def print_summary(model: mujoco.MjModel) -> None:
@@ -58,30 +59,22 @@ def run_headless(model: mujoco.MjModel, data: mujoco.MjData, seconds: float) -> 
 
 
 def run_viewer(model: mujoco.MjModel, data: mujoco.MjData) -> None:
-    import mujoco.viewer
+    from g1_manip import viewer
 
-    with mujoco.viewer.launch_passive(model, data) as viewer:
-        while viewer.is_running():
+    with viewer.launch(model, data) as v:
+        while v.is_running():
             t0 = time.time()
             mujoco.mj_step(model, data)
-            viewer.sync()
+            v.sync()
             dt = model.opt.timestep - (time.time() - t0)
             if dt > 0:
                 time.sleep(dt)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--headless", type=float, metavar="SECONDS",
-                        help="ビューアを開かずに指定秒数シミュレーションし、静止を確認する")
-    args = parser.parse_args()
-
+def run(args) -> int:
     model, data = load_model()
     print_summary(model)
     if args.headless is not None:
-        sys.exit(0 if run_headless(model, data, args.headless) else 1)
+        return 0 if run_headless(model, data, args.headless) else 1
     run_viewer(model, data)
-
-
-if __name__ == "__main__":
-    main()
+    return 0

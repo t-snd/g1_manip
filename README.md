@@ -43,6 +43,64 @@ python -c "import mujoco, mink, lerobot"
 - 動画のエンコード・デコード（torchcodec）には FFmpeg が必要：`brew install ffmpeg`。このプロジェクトのデータセットは動画を使わない
   （フェーズ8の画像も PNG で parquet に埋め込む）ので不要。未導入だと lerobot の import 時に torchcodec の長い警告（Traceback）が出るが、影響はない。
 
+## 使い方（コマンド）
+
+すべての操作は `python -m g1_manip <コマンド>` で行う（**リポジトリのルートで実行する**。コマンドごとのオプションは `-h`）。
+ビューアを開くもの（`scene` の既定・`--view`）は macOS では `mjpython` で実行する（末尾の「実行上の注意」）。
+
+```bash
+.venv/bin/python -m g1_manip --help          # コマンドの一覧
+.venv/bin/python -m g1_manip eval -h         # コマンドごとのオプション
+```
+
+| コマンド | 内容 | フェーズ |
+|---|---|---|
+| `scene` | シーンをビューアで表示／`--headless` でビューアなしに静止を確かめる | 2 |
+| `actuators` | アクチュエータの一覧と、右腕・右手の追従テスト | 3 |
+| `ik-test` | IK で机上の 20 点に手のひらを持っていく到達テスト | 4 |
+| `demo` | スクリプト方策（教師）を動かして成功率を見る（保存しない） | 5 |
+| `generate` | スクリプト方策でデモを生成して LeRobot 形式で保存し、リプレイ検証する | 5 |
+| `add-images` | 状態のみのピック＆プレースのデモを再生し、頭部カメラの画像を付ける | 8 |
+| `push` | データセットを Hugging Face Hub の private リポジトリへ上げる | 6 の準備 |
+| `eval` | 学習済み ACT 方策をシミュレーションで動かし、成功率を出す | 7 |
+| `analyze dist / traj / grid` | ピック＆プレースの方策を学習データ・教師・最近傍リプレイと比べる | 7 |
+| `gui` | 上面図でキューブと置き場所を置いて、方策・教師・最近傍リプレイを動かす | 7・8 |
+
+学習（フェーズ6）は Colab のノートブック（`notebooks/`）で行う。
+
+### パッケージの構成
+
+| モジュール | 内容 |
+|---|---|
+| `g1_manip/config.py` | 定数・ハイパーパラメータ（関節名、範囲、しきい値、既定のパス） |
+| `g1_manip/env.py` | シーンの組み立て、`ReachEnv`・`PickPlaceEnv`（リセット・観測・行動・成功判定） |
+| `g1_manip/ik.py` | mink による右手先の IK（`RightHandIK`） |
+| `g1_manip/scripted.py` | スクリプト方策（教師）：`ScriptedReachPolicy`・`ScriptedPickPlacePolicy` |
+| `g1_manip/dataset.py` | LeRobot 形式での保存・読み込み、std の下限、生成時の記録（`g1_generation.json`） |
+| `g1_manip/training_data.py` | 学習データの parquet の読み込み、初期配置が最も近い学習エピソード（`TrainingNeighbors`） |
+| `g1_manip/policy.py` | 学習済み ACT の読み込み（推論の条件の上書き）、観測 → 行動 |
+| `g1_manip/rollout.py` | 1 エピソード動かすループ、失敗の内訳、最終状態の取り出し |
+| `g1_manip/video.py`・`viewer.py` | 斜め上の視点の mp4、ビューアの実時間表示 |
+| `g1_manip/cli.py`・`commands/` | コマンドライン（呼ばれたコマンドのモジュールだけを読み込む） |
+
+### 旧スクリプトとの対応
+
+2026-10 のリファクタリングで `scripts/` の番号付きスクリプトを上のコマンドにまとめた（オプションは同じ）。
+ノートブックのコメントに残っている旧スクリプト名は次のように読み替える。
+
+| 旧スクリプト | コマンド |
+|---|---|
+| `scripts/01_view_scene.py` | `scene` |
+| `scripts/02_check_actuators.py` | `actuators` |
+| `scripts/03_ik_reach_test.py` | `ik-test` |
+| `scripts/04_scripted_demo.py` | `demo` |
+| `scripts/05_generate_dataset.py` | `generate` |
+| `scripts/05b_push_dataset.py` | `push` |
+| `scripts/05c_add_images.py` | `add-images` |
+| `scripts/06_eval_policy.py` | `eval` |
+| `scripts/07_analyze_pick.py` | `analyze` |
+| `scripts/08_pick_gui.py` | `gui` |
+
 ## シーン構成（フェーズ2）
 
 - `assets/scene_table.xml`：床・ライト・机・キューブ・目標マーカーだけを定義する（G1 本体は含まない）。
@@ -55,8 +113,8 @@ python -c "import mujoco, mink, lerobot"
 - 寸法・初期姿勢・カメラ設定などの定数は `g1_manip/config.py` に集約している。
 
 ```bash
-.venv/bin/mjpython scripts/01_view_scene.py              # ビューアで表示
-.venv/bin/python scripts/01_view_scene.py --headless 5   # ビューアなしで 5 秒動かし、静止を自動チェック
+.venv/bin/mjpython -m g1_manip scene              # ビューアで表示
+.venv/bin/python -m g1_manip scene --headless 5   # ビューアなしで 5 秒動かし、静止を自動チェック
 ```
 
 ## アクチュエータと行動（フェーズ3）
@@ -80,8 +138,8 @@ python -c "import mujoco, mink, lerobot"
   目標の適用は `env.apply_joint_targets`、制御1周期（50Hz）の前進は `env.step_control` を使う。
 
 ```bash
-.venv/bin/python scripts/02_check_actuators.py          # 一覧表示＋追従テスト（合否判定、失敗時は終了コード 1）
-.venv/bin/mjpython scripts/02_check_actuators.py --view # 同じテストをビューアで表示
+.venv/bin/python -m g1_manip actuators          # 一覧表示＋追従テスト（合否判定、失敗時は終了コード 1）
+.venv/bin/mjpython -m g1_manip actuators --view # 同じテストをビューアで表示
 ```
 
 ## IK（フェーズ4）
@@ -105,8 +163,8 @@ python -c "import mujoco, mink, lerobot"
   - 準備姿勢は肘を張った姿勢（肩 roll −1.33rad）だが、接触はなく可動域にも余裕がある。IK は1回平均 2.5ms（最大約 15ms）で 50Hz に収まる。
 
 ```bash
-.venv/bin/python scripts/03_ik_reach_test.py          # 到達テスト（合否判定）
-.venv/bin/mjpython scripts/03_ik_reach_test.py --view # ビューアで表示
+.venv/bin/python -m g1_manip ik-test          # 到達テスト（合否判定）
+.venv/bin/mjpython -m g1_manip ik-test --view # ビューアで表示
 ```
 
 ## スクリプト方策とデモ生成（フェーズ5）
@@ -146,10 +204,10 @@ python -c "import mujoco, mink, lerobot"
   観測の配線ミスを見つけやすくするため、評価では n_action_steps を小さくした条件でも試す。
 
 ```bash
-.venv/bin/python scripts/04_scripted_demo.py --episodes 20            # スクリプト方策の成功率（保存なし）
-.venv/bin/mjpython scripts/04_scripted_demo.py --view --episodes 3    # ビューアで表示
-.venv/bin/python scripts/05_generate_dataset.py --task reach --num-episodes 200 --overwrite  # 生成＋リプレイ検証
-.venv/bin/python scripts/05_generate_dataset.py --task reach --num-episodes 200 --replay-only  # リプレイ検証だけ
+.venv/bin/python -m g1_manip demo --episodes 20            # スクリプト方策の成功率（保存なし）
+.venv/bin/mjpython -m g1_manip demo --view --episodes 3    # ビューアで表示
+.venv/bin/python -m g1_manip generate --task reach --num-episodes 200 --overwrite  # 生成＋リプレイ検証
+.venv/bin/python -m g1_manip generate --task reach --num-episodes 200 --replay-only  # リプレイ検証だけ
 ```
 
 ### 後続フェーズへの申し送り（フェーズ2の検証で判明）
@@ -212,9 +270,9 @@ python -c "import mujoco, mink, lerobot"
   リーチングのデータ（`g1_reach_50`）のリプレイ検証と、フェーズ4の到達テスト（20/20、最大 0.26cm）も変更後に再確認した。
 
 ```bash
-.venv/bin/python scripts/04_scripted_demo.py --task pick --episodes 20
-.venv/bin/mjpython scripts/04_scripted_demo.py --task pick --view --episodes 3
-.venv/bin/python scripts/05_generate_dataset.py --task pick --num-episodes 200   # 生成＋リプレイ検証
+.venv/bin/python -m g1_manip demo --task pick --episodes 20
+.venv/bin/mjpython -m g1_manip demo --task pick --view --episodes 3
+.venv/bin/python -m g1_manip generate --task pick --num-episodes 200   # 生成＋リプレイ検証
 ```
 
 ## ACT 学習（フェーズ6, Colab）
@@ -223,7 +281,7 @@ python -c "import mujoco, mink, lerobot"
 
    ```bash
    .venv/bin/hf auth login                                                # write 権限のトークン
-   .venv/bin/python scripts/05b_push_dataset.py --repo-id sanada331/g1_reach   # 既定で data/g1_reach_200 を上げる
+   .venv/bin/python -m g1_manip push --repo-id sanada331/g1_reach   # 既定で data/g1_reach_200 を上げる
    ```
 
    push 後に Hub 上で private になっていることを確認し、public なら異常終了する。
@@ -266,7 +324,7 @@ python -c "import mujoco, mink, lerobot"
 ### ピック＆プレース
 
 ```bash
-.venv/bin/python scripts/05b_push_dataset.py --root data/g1_pick_200 --repo-id sanada331/g1_pick
+.venv/bin/python -m g1_manip push --root data/g1_pick_200 --repo-id sanada331/g1_pick
 ```
 
 Colab では `notebooks/train_act_pick_colab.ipynb` を使う（手順はリーチング版と同じ。学習の設定も同じで 50,000 ステップ、batch 64）。違いは次の 3 点：
@@ -289,15 +347,15 @@ Colab では `notebooks/train_act_pick_colab.ipynb` を使う（手順はリー�
 
 ## 評価（フェーズ7, Mac）
 
-Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を `scripts/06_eval_policy.py` でシミュレーション上で動かし、成功率を出す。
+Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を `eval` コマンド（`g1_manip/commands/evaluate.py`）でシミュレーション上で動かし、成功率を出す。
 
 ```bash
-.venv/bin/python scripts/06_eval_policy.py                                  # 既定: outputs/act_g1_reach_v1/pretrained_model、50 エピソード
-.venv/bin/python scripts/06_eval_policy.py --task pick                      # ピック＆プレース（既定: outputs/act_g1_pick_v1/pretrained_model、data/g1_pick_200）
-.venv/bin/python scripts/06_eval_policy.py --temporal-ensemble 0.01         # 毎ステップ予測して重ねて平均する（ACT 論文の係数）
-.venv/bin/python scripts/06_eval_policy.py --n-action-steps 10              # チャンクのうち 10 個だけ実行して予測し直す（下の結果を参照）
-.venv/bin/python scripts/06_eval_policy.py --episodes 5 --video outputs/eval_reach.mp4
-.venv/bin/mjpython scripts/06_eval_policy.py --view --episodes 3
+.venv/bin/python -m g1_manip eval                                  # 既定: outputs/act_g1_reach_v1/pretrained_model、50 エピソード
+.venv/bin/python -m g1_manip eval --task pick                      # ピック＆プレース（既定: outputs/act_g1_pick_v1/pretrained_model、data/g1_pick_200）
+.venv/bin/python -m g1_manip eval --temporal-ensemble 0.01         # 毎ステップ予測して重ねて平均する（ACT 論文の係数）
+.venv/bin/python -m g1_manip eval --n-action-steps 10              # チャンクのうち 10 個だけ実行して予測し直す（下の結果を参照）
+.venv/bin/python -m g1_manip eval --episodes 5 --video outputs/eval_reach.mp4
+.venv/bin/mjpython -m g1_manip eval --view --episodes 3
 ```
 
 - 読み込みは `ACTPolicy.from_pretrained` ＋ `make_pre_post_processors`。Colab で学習したモデルは前処理の device が `cuda` なので、
@@ -359,7 +417,7 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
     手のひらの下向き（y）に +0.3〜+1.4cm、法線（z）に +0.2〜+2.0cm ずれている（差の絶対値の平均は 0.66cm・0.62cm、
     成功 42 件では 0.10cm・0.22cm）。8 件とも同じ向きで、手のひらが高く、手前で止まってキューブの上側をつかみ、
     持ち上げる途中で抜け落ちる（動画でも確認）。
-    調べたスクリプト：`outputs/act_g1_pick_v1/grasp_diag.py`（git 管理外）。
+    調べたスクリプト：`outputs/act_g1_pick_v1/grasp_diag.py`（git 管理外。リファクタリング前の `scripts/06_eval_policy.py` を読み込むので、今のままでは動かない）。
   - 既定の条件で 0.6rad を超える跳びは失敗したエピソードのチャンクの切り替わり（300・400 ステップ目）だけで出る（5 件）。
     つかみ損ねて学習データに無い状態になった後に予測し直した結果で、失敗の原因ではなく結果と考えられる（推測）。
   - 録画（git 管理外）：既定の条件の成功 3 件 `outputs/act_g1_pick_v1/eval_pick_n100_seed100000-100002.mp4`、
@@ -369,21 +427,21 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
   ピック＆プレースでは、各エピソードの初期配置に最も近い学習エピソードとの距離もログと JSON（`train_nn`）に出す。
 
   ```bash
-  .venv/bin/python scripts/06_eval_policy.py --task pick --cube 0.30 -0.15 10 --target 0.28 0.0 --episodes 1 --video outputs/pick.mp4
-  .venv/bin/mjpython scripts/06_eval_policy.py --task pick --cube 0.42 -0.20 0 --target 0.30 0.0 --episodes 1 --view
+  .venv/bin/python -m g1_manip eval --task pick --cube 0.30 -0.15 10 --target 0.28 0.0 --episodes 1 --video outputs/pick.mp4
+  .venv/bin/mjpython -m g1_manip eval --task pick --cube 0.42 -0.20 0 --target 0.30 0.0 --episodes 1 --view
   ```
 
-### GUI で配置して推論を試す（`scripts/08_pick_gui.py`）
+### GUI で配置して推論を試す（`gui` コマンド）
 
 ```bash
-.venv/bin/python scripts/08_pick_gui.py                                   # 既定: outputs/act_g1_pick_v1/pretrained_model
-.venv/bin/python scripts/08_pick_gui.py --policy-path outputs/<RUN_NAME>/pretrained_model
+.venv/bin/python -m g1_manip gui                                   # 既定: outputs/act_g1_pick_v1/pretrained_model
+.venv/bin/python -m g1_manip gui --policy-path outputs/<RUN_NAME>/pretrained_model
 ```
 
 - 左の上面図で、赤い四角（キューブ）と緑の三角（置き場所）をドラッグで置く。キューブの向きはマウスホイールかスライダー（±45°）。
   印の大きさは学習データの点に合わせた小さなもの（実寸ではない。実物はキューブ 1 辺 4.5cm、シーンの目標の円盤は直径 8cm）。
   薄い点・三角は学習データの初期配置、破線は学習時の範囲、緑の点線の円は置き場所から 10cm（学習ではキューブは必ずこれより遠い）。
-  配置を動かすたびに、学習データとの近さ（06 と同じ正規化距離）と、範囲外などの注意を表示する。
+  配置を動かすたびに、学習データとの近さ（eval と同じ正規化距離）と、範囲外などの注意を表示する。
 - 上面図の下の「実行するもの」で、方策（既定 / temporal ensembling 0.01 / 10 ステップごとに予測）・教師（スクリプト方策）・
   最近傍リプレイ（最も近い学習エピソードの行動列をそのまま再生）を選んで［実行］。ロボットの初期姿勢はシードで変わる。
 - 右に実行中の映像（斜め上の視点と頭部カメラ）、上面図に手のひらの軌跡を描き、終わると操作欄の下に成功・失敗（内訳）・置き誤差を表示する。
@@ -400,20 +458,20 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
   「動画を保存」は毎ステップ描画するので、1 エピソード約 30〜35 秒かかる（実測。高速モードの方が少し遅い）。
   結果はどちらでも同じ（シミュレーションは決定的）。
 - 動作確認：`--selftest --screenshot <png>` でドラッグ操作をイベントで送ってキューブを (0.30, -0.15, 10°)、置き場所を (0.28, 0.00) に置き、
-  既定の方策で 1 エピソード実行する。結果（成功、置き誤差 0.58cm、持ち上げ 10.0cm）は `06_eval_policy.py --task pick --cube 0.30 -0.15 10
+  既定の方策で 1 エピソード実行する。結果（成功、置き誤差 0.58cm、持ち上げ 10.0cm）は `eval --task pick --cube 0.30 -0.15 10
   --target 0.28 0.0` の シード 100000 と一致。`--screenshot` は上面図・映像・情報欄を 1 枚にした画像（ボタンなどは写らない）。
 
-### 追加分析：学習データ・教師・リプレイとの比較（`scripts/07_analyze_pick.py`）
+### 追加分析：学習データ・教師・リプレイとの比較（`analyze` コマンド）
 
 「リプレイ（学習データの再生）ではなく、推論で配置に合わせて動けているか」を確かめる。出力は `outputs/act_g1_pick_v1/analysis/`
 （git 管理外。`--out-dir` で変えられる）。
 
 ```bash
-.venv/bin/python scripts/07_analyze_pick.py dist --show eval_pick_te0.01_50ep   # 初期配置の分布（06 の結果 JSON を読むだけ。数秒）
-.venv/bin/python scripts/07_analyze_pick.py traj                                 # 方策・教師・最近傍リプレイ（50 シード、約 3 分）
-.venv/bin/python scripts/07_analyze_pick.py traj --temporal-ensemble 0.01        # 約 7 分
-.venv/bin/python scripts/07_analyze_pick.py grid --with-scripted --with-replay   # キューブの位置を格子状に振る（195 点、約 13 分）
-.venv/bin/python scripts/07_analyze_pick.py traj --replot outputs/act_g1_pick_v1/analysis/traj_n100.json   # 図だけ描き直す
+.venv/bin/python -m g1_manip analyze dist --show eval_pick_te0.01_50ep   # 初期配置の分布（eval の結果 JSON を読むだけ。数秒）
+.venv/bin/python -m g1_manip analyze traj                                 # 方策・教師・最近傍リプレイ（50 シード、約 3 分）
+.venv/bin/python -m g1_manip analyze traj --temporal-ensemble 0.01        # 約 7 分
+.venv/bin/python -m g1_manip analyze grid --with-scripted --with-replay   # キューブの位置を格子状に振る（195 点、約 13 分）
+.venv/bin/python -m g1_manip analyze traj --replot outputs/act_g1_pick_v1/analysis/traj_n100.json   # 図だけ描き直す
 ```
 
 - 比べる相手：
@@ -423,7 +481,7 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
     （正解の軌跡は見ない。方策は毎ステップ観測を見て行動を出す点が違う）。
   - 参考：学習データ 200 本のうち、把持の区間で手のひらが教師に最も近いもの（正解を見て選んだ上限で、方策にもリプレイにも選べない）。
 - 「近さ」は、モデルが見るのと同じ正規化（`meta/stats.json` の mean/std）をした environment_state（キューブの位置・姿勢・置き場所）の
-  距離で測る（`g1_manip/pick_analysis.py`）。学習データは parquet を直接読む（LeRobotDataset の値と一致を確認）。
+  距離で測る（`g1_manip/training_data.py`）。学習データは parquet を直接読む（LeRobotDataset の値と一致を確認）。
 - 手のひらの位置は `observation.state` から順運動学で求める（シミュレーション中の `site_xpos` は mj_step の積分前の値で、
   1mm 未満ずれる）。時間の区間は教師の区間から決める：近づく区間 0〜2.6 秒（approach・descend・insert）、
   把持の区間 2.6〜3.6 秒（close・settle：手のひらが把持の位置でほぼ止まり、指を閉じる）。
@@ -482,12 +540,12 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
 キューブ・目標の真値（`environment_state`）の代わりに、頭部カメラの RGB 画像（224×224、`observation.images.head`）を入力にする。
 入力は関節角（14）＋画像、出力は関節目標角（14）。
 
-### データ（`scripts/05c_add_images.py`）
+### データ（`add-images` コマンド）
 
 ```bash
-.venv/bin/python scripts/05c_add_images.py                  # data/g1_pick_200 → data/g1_pick_img_200（M1 で約 80 分、約 3.0GB）
-.venv/bin/python scripts/05c_add_images.py --check-only     # 検証だけ
-.venv/bin/python scripts/05b_push_dataset.py --root data/g1_pick_img_200 --repo-id sanada331/g1_pick_img
+.venv/bin/python -m g1_manip add-images                  # data/g1_pick_200 → data/g1_pick_img_200（M1 で約 80 分、約 3.0GB）
+.venv/bin/python -m g1_manip add-images --check-only     # 検証だけ
+.venv/bin/python -m g1_manip push --root data/g1_pick_img_200 --repo-id sanada331/g1_pick_img
 ```
 
 - 状態ベースのデモ `g1_pick_200` の各エピソードを、記録したシードで初期化して保存した action のまま再生し、各ステップの観測（行動を与える前）で
@@ -519,9 +577,9 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
 ### 評価・GUI
 
 ```bash
-.venv/bin/python scripts/06_eval_policy.py --task pick --policy-path outputs/act_g1_pick_img_v1/pretrained_model
-.venv/bin/python scripts/06_eval_policy.py --task pick --policy-path outputs/act_g1_pick_img_v1/pretrained_model --temporal-ensemble 0.01
-.venv/bin/python scripts/08_pick_gui.py --policy-path outputs/act_g1_pick_img_v1/pretrained_model
+.venv/bin/python -m g1_manip eval --task pick --policy-path outputs/act_g1_pick_img_v1/pretrained_model
+.venv/bin/python -m g1_manip eval --task pick --policy-path outputs/act_g1_pick_img_v1/pretrained_model --temporal-ensemble 0.01
+.venv/bin/python -m g1_manip gui --policy-path outputs/act_g1_pick_img_v1/pretrained_model
 ```
 
 - モデルの入力に `observation.images.head` があれば、環境で頭部カメラを描いて渡す（`obs_to_batch` で学習データの読み込みと同じ
@@ -535,13 +593,14 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
 - 画像入力のモデルは 1 ステップごとに観測の画像を描くので、1 ステップ約 60ms かかり（画像なしは約 1ms）、実時間（20ms）に追いつけない。
   GUI の「実時間で再生」では描画 1 回の間に進めるステップ数を 10 までにしてあり、9 秒のエピソードが約 35 秒かかる
   （ほかに重い処理を動かしていないとき。描画の間隔は最長約 0.9 秒。上限が無いと 1 回の描画の間に残り全部を進めて窓が固まった）。状態入力のモデルは今までどおり約 9 秒。
-- `scripts/07_analyze_pick.py`（学習データ・教師・リプレイとの比較）は状態ベースのモデル用で、画像入力のモデルには未対応。
+- `analyze`（学習データ・教師・リプレイとの比較）は、モデルの入力に画像があれば環境で頭部カメラを描いて渡す（eval・gui と同じ）。
+  1 ステップごとに画像を描くので、状態ベースのモデルより大幅に遅い。
 
 ## 実行上の注意（macOS）
 
 `mujoco.viewer.launch_passive` は macOS では `python` ではなく **`mjpython`** で実行する必要がある。
-ビューアを使うスクリプトはすべて次のように実行する：
+ビューアを使うコマンド（`scene` の既定、`actuators`・`ik-test`・`demo`・`eval` の `--view`）はすべて次のように実行する：
 
 ```bash
-.venv/bin/mjpython scripts/01_view_scene.py
+.venv/bin/mjpython -m g1_manip scene
 ```

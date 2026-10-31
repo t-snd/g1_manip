@@ -1,9 +1,9 @@
-"""スクリプト方策でデモを生成し、LeRobot 形式で保存する。保存後にリプレイ検証も行う。
+"""スクリプト方策でデモを生成し、LeRobot 形式で保存する（フェーズ5）。保存後にリプレイ検証も行う。
 
-    python scripts/05_generate_dataset.py --task reach --num-episodes 50
-    python scripts/05_generate_dataset.py --task reach --num-episodes 200 --overwrite
-    python scripts/05_generate_dataset.py --task reach --num-episodes 50 --replay-only   # 既存データのリプレイ検証だけ
-    python scripts/05_generate_dataset.py --task pick --num-episodes 200                 # ピック＆プレース
+    python -m g1_manip generate --task reach --num-episodes 50
+    python -m g1_manip generate --task reach --num-episodes 200 --overwrite
+    python -m g1_manip generate --task reach --num-episodes 50 --replay-only    # 既存データのリプレイ検証だけ
+    python -m g1_manip generate --task pick --num-episodes 200                  # ピック＆プレース
 
 - 成功したエピソードだけを保存し、試行数と成功率をログに出す
 - エピソード i（試行番号）の乱数シードは GEN_SEED_BASE + i。使ったシードは <root>/g1_generation.json に記録する
@@ -12,7 +12,6 @@
   (3) environment_state が初期状態と一致するか、を確かめる
 """
 
-import argparse
 import json
 import sys
 import time
@@ -20,10 +19,9 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g1_manip import config, dataset  # noqa: E402
-from g1_manip.env import PickPlaceEnv, ReachEnv  # noqa: E402
-from g1_manip.scripted import ScriptedPickPlacePolicy, ScriptedReachPolicy  # noqa: E402
+from g1_manip import config, dataset
+from g1_manip.env import PickPlaceEnv, ReachEnv
+from g1_manip.scripted import ScriptedPickPlacePolicy, ScriptedReachPolicy
 
 TASKS = {
     "reach": dict(env=ReachEnv, policy=ScriptedReachPolicy, steps=config.REACH_EPISODE_STEPS,
@@ -78,7 +76,7 @@ def generate(args, spec, root: Path) -> None:
 
 def replay_check(args, spec, root: Path) -> bool:
     info = dataset.read_generation_info(root)
-    episodes = dataset.load_episodes(root, info["repo_id"])
+    episodes = dataset.load_episodes_lerobot(root, info["repo_id"])
     assert len(episodes) == len(info["seeds"]), "エピソード数と記録したシードの数が一致しない"
     env = spec["env"]()
     n = len(episodes) if args.replay_episodes <= 0 else min(args.replay_episodes, len(episodes))
@@ -108,8 +106,7 @@ def replay_check(args, spec, root: Path) -> bool:
     return all(checks.values())
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def add_arguments(parser) -> None:
     parser.add_argument("--task", choices=sorted(TASKS), default="reach")
     parser.add_argument("--num-episodes", type=int, default=50, help="保存する成功エピソード数")
     parser.add_argument("--max-attempts", type=int, default=None, help="試行数の上限（既定: 保存数 × GEN_MAX_ATTEMPTS_FACTOR）")
@@ -118,8 +115,9 @@ def main() -> None:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--replay-only", action="store_true", help="生成せず、既存データのリプレイ検証だけ行う")
     parser.add_argument("--replay-episodes", type=int, default=0, help="リプレイ検証するエピソード数（0 = 全部）")
-    args = parser.parse_args()
 
+
+def run(args) -> int:
     spec = TASKS[args.task]
     root = args.root or config.DATA_DIR / f"g1_{args.task}_{args.num_episodes}"
     args.repo_id = args.repo_id or f"local/g1_{args.task}"
@@ -127,8 +125,5 @@ def main() -> None:
 
     if not args.replay_only:
         generate(args, spec, root)
-    sys.exit(0 if replay_check(args, spec, root) else 1)
+    return 0 if replay_check(args, spec, root) else 1
 
-
-if __name__ == "__main__":
-    main()

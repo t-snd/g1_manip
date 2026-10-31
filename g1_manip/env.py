@@ -292,7 +292,7 @@ class PickPlaceEnv(ReachEnv):
         self.target = np.array([*target_xy, self.table_top_z])
         # 目標マーカー（厚さ 1mm の円盤）を天板の上に置く
         self.data.mocap_pos[self.target_mocap] = self.target + [0.0, 0.0, 0.0005]
-        self.goal = self.target  # 04_scripted_demo.py などが env.goal を参照するため
+        self.goal = self.target  # demo コマンドなどが env.goal を参照するため
         mujoco.mj_forward(self.model, self.data)
         return self.observation()
 

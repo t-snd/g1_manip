@@ -1,7 +1,7 @@
 """アクチュエータの一覧表示と、右腕・右手の関節目標角への追従テスト。
 
-    python scripts/02_check_actuators.py            # 一覧表示＋追従テスト（ビューアなし、合否判定）
-    mjpython scripts/02_check_actuators.py --view   # 同じテストをビューアで表示しながら実行
+    python -m g1_manip actuators              # 一覧表示＋追従テスト（ビューアなし、合否判定）
+    mjpython -m g1_manip actuators --view     # 同じテストをビューアで表示しながら実行
 
 テスト内容（制御は 50Hz、行動＝関節の目標角度（絶対値））:
   1. 右肘の目標角を正弦波で動かし、追従誤差を測る
@@ -13,26 +13,20 @@
 テストのパラメータと合格しきい値は config.py（TEST_* / TRACK_* / IDLE_MAX_DEV）にある。
 """
 
-import argparse
 import itertools
-import sys
-import time
-from pathlib import Path
 
 import mujoco
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g1_manip import config  # noqa: E402
-from g1_manip.env import (  # noqa: E402
-    apply_joint_targets,
-    joint_actuator_ids,
-    joint_qpos_ids,
-    load_model,
-    step_control,
-)
+from g1_manip import config
+from g1_manip.env import apply_joint_targets, joint_actuator_ids, joint_qpos_ids, load_model, step_control
+from g1_manip.scripted import min_jerk
 
 DT = 1.0 / config.CONTROL_HZ
+
+
+def add_arguments(parser) -> None:
+    parser.add_argument("--view", action="store_true", help="ビューアで表示しながら実行（mjpython で実行すること）")
 
 
 def actuator_type(model: mujoco.MjModel, i: int) -> str:
@@ -154,8 +148,7 @@ def run_tests(model, data, sync=None) -> bool:
         n_sat = np.zeros(len(target))
         n_phys = 0
         for k in range(int(config.TEST_STEP_HOLD / DT)):
-            s = min(1.0, (k + 1) / n_ramp)
-            s = 10 * s ** 3 - 15 * s ** 4 + 6 * s ** 5  # min-jerk
+            s = min_jerk((k + 1) / n_ramp)
             apply_joint_targets(model, data, ctrl_ids, start + s * (target - start))
             # step_control と同じだが、トルク飽和を物理ステップごとに数えるため1ステップずつ進める
             for _ in range(config.N_SUBSTEPS):
@@ -213,34 +206,16 @@ def run_tests(model, data, sync=None) -> bool:
     return all(checks.values())
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--view", action="store_true", help="ビューアで表示しながら実行（mjpython で実行すること）")
-    args = parser.parse_args()
-
+def run(args) -> int:
     model, data = load_model()
     print_actuators(model)
-
     if not args.view:
-        sys.exit(0 if run_tests(model, data) else 1)
+        return 0 if run_tests(model, data) else 1
 
-    import mujoco.viewer
+    from g1_manip import viewer
 
-    with mujoco.viewer.launch_passive(model, data) as viewer:
-        def sync():
-            if not viewer.is_running():
-                sys.exit("ビューアが閉じられたため、テストを中断しました。")
-            t0 = time.time()
-            viewer.sync()
-            time.sleep(max(0.0, DT - (time.time() - t0)))
-
-        ok = run_tests(model, data, sync=sync)
-        print("\nテスト終了。ビューアを閉じると終了します。")
-        while viewer.is_running():
-            viewer.sync()
-            time.sleep(0.05)
-    sys.exit(0 if ok else 1)
-
-
-if __name__ == "__main__":
-    main()
+    with viewer.launch(model, data) as v:
+        ok = run_tests(model, data, sync=lambda: viewer.sync(v, DT))
+        print("\nテスト終了。")
+        viewer.wait_until_closed(v)
+    return 0 if ok else 1

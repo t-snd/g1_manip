@@ -83,8 +83,9 @@ def read_generation_info(root: Path) -> dict:
     return json.loads((root / GEN_INFO_FILE).read_text())
 
 
-def load_episodes(root: Path, repo_id: str) -> list[dict[str, np.ndarray]]:
-    """保存したデータセットを読み込み、エピソードごとに {キー: (T, dim) 配列} の dict のリストで返す。"""
+def load_episodes_lerobot(root: Path, repo_id: str) -> list[dict[str, np.ndarray]]:
+    """保存したデータセットを LeRobotDataset で読み込み、エピソードごとに {キー: (T, dim) 配列} の dict のリストで返す。
+    保存形式の検証（generate のリプレイ検証）用。速く読むなら training_data.load_episodes（parquet を直接読む）。"""
     ds = LeRobotDataset(repo_id, root=root, video_backend="pyav")  # 動画は無い。既定の torchcodec は FFmpeg が無いと長い警告を出す
     keys = ["observation.state", "observation.environment_state", "action"]
     episodes: dict[int, dict[str, list]] = {}
