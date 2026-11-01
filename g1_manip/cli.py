@@ -20,7 +20,7 @@ COMMANDS = {
     "eval": ("evaluate", "学習済み ACT 方策をシミュレーションで動かし、成功率を出す（フェーズ7）"),
     "analyze": ("analyze", "ピック＆プレースの方策を学習データ・教師・最近傍リプレイと比べる（フェーズ7の追加分析）"),
     "gui": ("gui", "上面図でキューブと置き場所を置いて、方策・教師・最近傍リプレイを動かす GUI"),
-    "showcase": ("showcase", "紹介動画（教師デモ・画像入力 ACT の推論・失敗例・成功率）を作る"),
+    "showcase": ("showcase", "紹介動画（HyperFrames、video/）の素材（エピソードのクリップ・数値・散布図）を作る"),
 }
 PROG = "python -m g1_manip"
 

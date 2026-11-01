@@ -1,0 +1,47 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #14161b;
+      font-family: "Noto Sans JP", sans-serif;
+      color: #eceef2;
+    }
+    #ev-h {
+      position: absolute;
+      left: 160px;
+      top: 360px;
+      font-size: 64px;
+      font-weight: 700;
+    }
+    #ev-rule {
+      position: absolute;
+      left: 160px;
+      top: 462px;
+      width: 220px;
+      height: 6px;
+      background: #3987e5;
+    }
+    #ev-sub {
+      position: absolute;
+      left: 160px;
+      top: 500px;
+      font-size: 30px;
+      color: #a0a6b2;
+      line-height: 1.6;
+    }
+  </style>
+  <div data-hf-id="hf-qrst" id="root" data-composition-id="evalintro" data-width="1920" data-height="1080">
+    <h2 data-hf-id="hf-mqm5" id="ev-h">評価：成功例と失敗例</h2>
+    <div data-hf-id="hf-p36r" id="ev-rule"></div>
+    <div data-hf-id="hf-qlpx" id="ev-sub">画像入力の ACT（temporal ensembling 0.01）を、実際に動かしたまま等倍で見せる。<br data-hf-id="hf-x5px" />右上の散布図は、学習データの配置（灰色）と、いま試している配置（色付き）。</div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#ev-h", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 0.2);
+    tl.fromTo("#ev-rule", { scaleX: 0, transformOrigin: "left center" }, { scaleX: 1, duration: 0.5, ease: "power2.inOut" }, 0.6);
+    tl.fromTo("#ev-sub", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 0.9);
+    tl.to("#root", { opacity: 0, duration: 0.3 }, 5.7);
+    window.__timelines["evalintro"] = tl;
+  </script>
+</template>

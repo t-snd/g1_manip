@@ -1,0 +1,48 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; background: #14161b; font-family: "Noto Sans JP", sans-serif; color: #eceef2; }
+    #nglift-main { position: absolute; left: 0; top: 0; width: 1440px; height: 1080px; }
+    #nglift-tag { position: absolute; left: 32px; top: 28px; padding: 10px 22px; border-radius: 8px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; font-weight: 700; }
+    #nglift-tag span { color: #e66767; }
+    #nglift-speed { position: absolute; left: 1300px; top: 34px; padding: 6px 14px; border-radius: 6px;
+      background: rgba(20, 22, 27, 0.82); font-size: 22px; font-weight: 700; }
+    #nglift-cap { position: absolute; left: 0; top: 950px; width: 1440px; height: 130px; padding: 26px 40px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; line-height: 1.45; }
+    #nglift-side { position: absolute; left: 1440px; top: 0; width: 480px; height: 1080px; background: #1c1f26; }
+    #nglift-plot-h { position: absolute; left: 1460px; top: 14px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #nglift-plot { position: absolute; left: 1440px; top: 46px; width: 480px; height: 410px; }
+    #nglift-head-h { position: absolute; left: 1460px; top: 476px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #nglift-head { position: absolute; left: 1456px; top: 510px; width: 448px; height: 448px; }
+    #nglift-info { position: absolute; left: 1460px; top: 966px; width: 440px; font-size: 21px; color: #a0a6b2; line-height: 1.45; }
+    #nglift-badge { position: absolute; left: 720px; top: 400px; transform: translateX(-50%); padding: 28px 56px 24px;
+      border-radius: 18px; background: rgba(200, 64, 64, 0.94); text-align: center; white-space: nowrap; }
+    #nglift-badge-big { font-size: 60px; font-weight: 700; color: #ffffff; }
+    #nglift-badge-small { font-size: 26px; color: #ffffff; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  </style>
+  <div data-hf-id="hf-axak" id="root" data-composition-id="ep_ng_lift" data-width="1920" data-height="1080">
+    <video data-hf-id="hf-scjh" id="nglift-main" class="clip" data-start="0" data-duration="12.0" data-track-index="0"
+           src="assets/ng_lift_main.mp4" muted playsinline></video>
+    <div data-hf-id="hf-7jpv" id="nglift-tag">評価 ・ <span data-hf-id="hf-u02l">失敗例 1</span></div>
+    <div data-hf-id="hf-0wsj" id="nglift-speed">等倍</div>
+    <div data-hf-id="hf-ajp3" id="nglift-cap">つかみ損ね、キューブを少し動かしただけで持ち上げられない（50 配置中 1 件）</div>
+    <div data-hf-id="hf-mdp9" id="nglift-side"></div>
+    <div data-hf-id="hf-yll9" id="nglift-plot-h">初期配置（上から見た図）</div>
+    <img data-hf-id="hf-7mgf" id="nglift-plot" src="assets/placements_ng_lift.png" alt="" />
+    <div data-hf-id="hf-o8oy" id="nglift-head-h">頭部カメラ（方策の入力 224×224）</div>
+    <video data-hf-id="hf-x6nq" id="nglift-head" class="clip" data-start="0" data-duration="12.0" data-track-index="1"
+           src="assets/ng_lift_head.mp4" muted playsinline></video>
+    <div data-hf-id="hf-osy9" id="nglift-info">評価用シード 100019<br data-hf-id="hf-x5px" />キューブ (0.37, -0.08) m、+0°<br data-hf-id="hf-rsrt" />置き場所 (0.26, -0.05) m</div>
+    <div data-hf-id="hf-btyi" id="nglift-badge" class="clip" data-start="9.0" data-duration="3.0" data-track-index="2">
+      <div data-hf-id="hf-dg0n" id="nglift-badge-big">失敗：持ち上げられない</div>
+      <div data-hf-id="hf-i4h8" id="nglift-badge-small">置き場所との距離 9.2 cm ／ 持ち上げた高さ 1.4 cm</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#nglift-cap", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 0.2);
+    tl.fromTo("#nglift-badge-big", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, 9.0);
+    tl.fromTo("#nglift-badge-small", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 9.0 + 0.15);
+    window.__timelines["ep_ng_lift"] = tl;
+  </script>
+</template>

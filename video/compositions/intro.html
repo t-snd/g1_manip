@@ -1,0 +1,57 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #14161b;
+      font-family: "Noto Sans JP", sans-serif;
+      color: #eceef2;
+    }
+    #intro-kicker {
+      position: absolute;
+      left: 160px;
+      top: 330px;
+      font-size: 30px;
+      color: #a0a6b2;
+      letter-spacing: 0.04em;
+    }
+    #intro-title {
+      position: absolute;
+      left: 160px;
+      top: 390px;
+      font-size: 84px;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+    #intro-rule {
+      position: absolute;
+      left: 160px;
+      top: 625px;
+      width: 220px;
+      height: 6px;
+      background: #3987e5;
+    }
+    #intro-sub {
+      position: absolute;
+      left: 160px;
+      top: 665px;
+      font-size: 30px;
+      color: #a0a6b2;
+      line-height: 1.6;
+    }
+  </style>
+  <div data-hf-id="hf-ypfn" id="root" data-composition-id="intro" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-5jgt" id="intro-kicker">Physical AI 応用1講座 最終課題</div>
+    <h1 data-hf-id="hf-ikd8" id="intro-title">Unitree G1 のピック＆プレースを<br data-hf-id="hf-x5px" />画像入力の模倣学習（ACT）で</h1>
+    <div data-hf-id="hf-dl6c" id="intro-rule"></div>
+    <div data-hf-id="hf-pbh3" id="intro-sub">MuJoCo シミュレーション ／ 上半身のみ・右手でキューブをつかんで円盤の上に置く<br data-hf-id="hf-rsrt" />ロボットの映像はすべて等倍（1 倍速）</div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    // タイトルは 0 秒から出しておく（最初のフレームがサムネイルになる）
+    tl.fromTo("#intro-rule", { scaleX: 0, transformOrigin: "left center" }, { scaleX: 1, duration: 0.6, ease: "power2.inOut" }, 0.3);
+    tl.fromTo("#intro-sub", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 0.8);
+    tl.to("#root", { opacity: 0, duration: 0.4 }, 5.5);
+    window.__timelines["intro"] = tl;
+  </script>
+</template>

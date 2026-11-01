@@ -1,0 +1,48 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; background: #14161b; font-family: "Noto Sans JP", sans-serif; color: #eceef2; }
+    #oknear-main { position: absolute; left: 0; top: 0; width: 1440px; height: 1080px; }
+    #oknear-tag { position: absolute; left: 32px; top: 28px; padding: 10px 22px; border-radius: 8px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; font-weight: 700; }
+    #oknear-tag span { color: #40ba70; }
+    #oknear-speed { position: absolute; left: 1300px; top: 34px; padding: 6px 14px; border-radius: 6px;
+      background: rgba(20, 22, 27, 0.82); font-size: 22px; font-weight: 700; }
+    #oknear-cap { position: absolute; left: 0; top: 950px; width: 1440px; height: 130px; padding: 26px 40px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; line-height: 1.45; }
+    #oknear-side { position: absolute; left: 1440px; top: 0; width: 480px; height: 1080px; background: #1c1f26; }
+    #oknear-plot-h { position: absolute; left: 1460px; top: 14px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #oknear-plot { position: absolute; left: 1440px; top: 46px; width: 480px; height: 410px; }
+    #oknear-head-h { position: absolute; left: 1460px; top: 476px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #oknear-head { position: absolute; left: 1456px; top: 510px; width: 448px; height: 448px; }
+    #oknear-info { position: absolute; left: 1460px; top: 966px; width: 440px; font-size: 21px; color: #a0a6b2; line-height: 1.45; }
+    #oknear-badge { position: absolute; left: 720px; top: 400px; transform: translateX(-50%); padding: 28px 56px 24px;
+      border-radius: 18px; background: rgba(48, 150, 88, 0.94); text-align: center; white-space: nowrap; }
+    #oknear-badge-big { font-size: 60px; font-weight: 700; color: #ffffff; }
+    #oknear-badge-small { font-size: 26px; color: #ffffff; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  </style>
+  <div data-hf-id="hf-3a6c" id="root" data-composition-id="ep_ok_near" data-width="1920" data-height="1080">
+    <video data-hf-id="hf-ec1r" id="oknear-main" class="clip" data-start="0" data-duration="12.0" data-track-index="0"
+           src="assets/ok_near_main.mp4" muted playsinline></video>
+    <div data-hf-id="hf-ihdl" id="oknear-tag">評価 ・ <span data-hf-id="hf-cma4">成功例 3</span></div>
+    <div data-hf-id="hf-v045" id="oknear-speed">等倍</div>
+    <div data-hf-id="hf-0dxh" id="oknear-cap">キューブが手前・左にあり、置き場所に近い配置</div>
+    <div data-hf-id="hf-itqr" id="oknear-side"></div>
+    <div data-hf-id="hf-dx2v" id="oknear-plot-h">初期配置（上から見た図）</div>
+    <img data-hf-id="hf-9fl9" id="oknear-plot" src="assets/placements_ok_near.png" alt="" />
+    <div data-hf-id="hf-nlxk" id="oknear-head-h">頭部カメラ（方策の入力 224×224）</div>
+    <video data-hf-id="hf-94kc" id="oknear-head" class="clip" data-start="0" data-duration="12.0" data-track-index="1"
+           src="assets/ok_near_head.mp4" muted playsinline></video>
+    <div data-hf-id="hf-59yp" id="oknear-info">評価用シード 100036<br data-hf-id="hf-x5px" />キューブ (0.23, -0.07) m、+13°<br data-hf-id="hf-rsrt" />置き場所 (0.32, -0.01) m</div>
+    <div data-hf-id="hf-ub7w" id="oknear-badge" class="clip" data-start="9.0" data-duration="3.0" data-track-index="2">
+      <div data-hf-id="hf-pmfj" id="oknear-badge-big">成功</div>
+      <div data-hf-id="hf-o4jx" id="oknear-badge-small">置き場所との距離 0.6 cm ／ 持ち上げた高さ 10.6 cm</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#oknear-cap", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 0.2);
+    tl.fromTo("#oknear-badge-big", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, 9.0);
+    tl.fromTo("#oknear-badge-small", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 9.0 + 0.15);
+    window.__timelines["ep_ok_near"] = tl;
+  </script>
+</template>

@@ -1,0 +1,171 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #14161b;
+      font-family: "Noto Sans JP", sans-serif;
+      color: #eceef2;
+    }
+    #rs-h {
+      position: absolute;
+      left: 100px;
+      top: 60px;
+      font-size: 52px;
+      font-weight: 700;
+    }
+    #rs-sub {
+      position: absolute;
+      left: 100px;
+      top: 140px;
+      font-size: 26px;
+      color: #a0a6b2;
+    }
+    #rs-hero {
+      position: absolute;
+      left: 100px;
+      top: 230px;
+      font-size: 150px;
+      font-weight: 700;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      color: #eceef2;
+    }
+    #rs-hero-cap {
+      position: absolute;
+      left: 110px;
+      top: 400px;
+      font-size: 28px;
+      color: #a0a6b2;
+      line-height: 1.5;
+    }
+    .rs-row {
+      position: absolute;
+      left: 100px;
+      width: 1720px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 80px;
+    }
+    #rs-r1 {
+      top: 540px;
+    }
+    #rs-r2 {
+      top: 630px;
+    }
+    #rs-r3 {
+      top: 760px;
+    }
+    #rs-r4 {
+      top: 850px;
+    }
+    .rs-label {
+      width: 620px;
+      font-size: 26px;
+      text-align: right;
+    }
+    .rs-label small {
+      display: block;
+      font-size: 20px;
+      color: #a0a6b2;
+    }
+    .rs-track {
+      width: 800px;
+      height: 46px;
+      position: relative;
+      background: #1c1f26;
+      border-radius: 0 4px 4px 0;
+    }
+    .rs-bar {
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 46px;
+      border-radius: 0 4px 4px 0;
+      transform-origin: left center;
+    }
+    .rs-img {
+      background: #3987e5;
+    }
+    .rs-state {
+      background: #5d6370;
+    }
+    .rs-val {
+      font-size: 30px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    #rs-group2 {
+      position: absolute;
+      left: 100px;
+      top: 722px;
+      width: 620px;
+      text-align: right;
+      font-size: 22px;
+      color: #a0a6b2;
+    }
+    #rs-group1 {
+      position: absolute;
+      left: 100px;
+      top: 502px;
+      width: 620px;
+      text-align: right;
+      font-size: 22px;
+      color: #3987e5;
+      font-weight: 700;
+    }
+    #rs-note {
+      position: absolute;
+      left: 100px;
+      top: 965px;
+      font-size: 24px;
+      color: #a0a6b2;
+    }
+  </style>
+  <div data-hf-id="hf-uyvz" id="root" data-composition-id="results" data-width="1920" data-height="1080">
+    <h2 data-hf-id="hf-8414" id="rs-h">推論結果</h2>
+    <div data-hf-id="hf-80nf" id="rs-sub">学習に使っていない 50 配置（評価用シード 100000〜100049）で、Mac（M1）の MuJoCo 上で動かした成功数</div>
+    <div data-hf-id="hf-vypj" id="rs-hero">94%</div>
+    <div data-hf-id="hf-cror" id="rs-hero-cap">画像と関節角だけで 47/50 成功<br data-hf-id="hf-x5px" />（temporal ensembling、係数 0.01）</div>
+    <div data-hf-id="hf-2c3t" id="rs-group1">画像入力（このモデル）</div>
+    <div data-hf-id="hf-imjt" class="rs-row" id="rs-r1">
+      <div data-hf-id="hf-uzr6" class="rs-label">temporal ensembling<small data-hf-id="hf-hfr2">毎ステップ予測し、重なった予測を重み付きで平均</small></div>
+      <div data-hf-id="hf-5sh3" class="rs-track"><div data-hf-id="hf-mxbp" class="rs-bar rs-img" id="rs-b1" style="width: 752px"></div></div>
+      <div data-hf-id="hf-mi7u" class="rs-val">47/50</div>
+    </div>
+    <div data-hf-id="hf-mknu" class="rs-row" id="rs-r2">
+      <div data-hf-id="hf-1gu9" class="rs-label">100 ステップごとに予測<small data-hf-id="hf-vhlx">チャンクを最後まで実行してから予測し直す</small></div>
+      <div data-hf-id="hf-ik1z" class="rs-track"><div data-hf-id="hf-kqyr" class="rs-bar rs-img" id="rs-b2" style="width: 720px"></div></div>
+      <div data-hf-id="hf-cgg4" class="rs-val">45/50</div>
+    </div>
+    <div data-hf-id="hf-vpx4" id="rs-group2">参考：座標の真値を入力したモデル</div>
+    <div data-hf-id="hf-qirv" class="rs-row" id="rs-r3">
+      <div data-hf-id="hf-hzae" class="rs-label">temporal ensembling</div>
+      <div data-hf-id="hf-i5qy" class="rs-track"><div data-hf-id="hf-xwem" class="rs-bar rs-state" id="rs-b3" style="width: 672px"></div></div>
+      <div data-hf-id="hf-wuhz" class="rs-val">42/50</div>
+    </div>
+    <div data-hf-id="hf-31ac" class="rs-row" id="rs-r4">
+      <div data-hf-id="hf-hxud" class="rs-label">100 ステップごとに予測</div>
+      <div data-hf-id="hf-hrfx" class="rs-track"><div data-hf-id="hf-z6f0" class="rs-bar rs-state" id="rs-b4" style="width: 688px"></div></div>
+      <div data-hf-id="hf-0mw6" class="rs-val">43/50</div>
+    </div>
+    <div data-hf-id="hf-qdh6" id="rs-note">座標を与えなくても、座標を与えたモデルと同程度以上に成功した</div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#rs-h", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.2);
+    tl.fromTo("#rs-sub", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 0.5);
+    tl.fromTo("#rs-hero", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 1.0);
+    tl.fromTo("#rs-hero-cap", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 1.5);
+    tl.fromTo(["#rs-group1", "#rs-r1 .rs-label", "#rs-r2 .rs-label"], { opacity: 0 }, { opacity: 1, duration: 0.4 }, 3.0);
+    tl.fromTo(["#rs-b1", "#rs-b2"], { scaleX: 0 }, { scaleX: 1, duration: 0.9, ease: "power2.out" }, 3.4);
+    tl.fromTo(["#rs-r1 .rs-val", "#rs-r2 .rs-val"], { opacity: 0 }, { opacity: 1, duration: 0.3 }, 4.2);
+    tl.fromTo(["#rs-group2", "#rs-r3 .rs-label", "#rs-r4 .rs-label"], { opacity: 0 }, { opacity: 1, duration: 0.4 }, 5.6);
+    tl.fromTo(["#rs-b3", "#rs-b4"], { scaleX: 0 }, { scaleX: 1, duration: 0.9, ease: "power2.out" }, 6.0);
+    tl.fromTo(["#rs-r3 .rs-val", "#rs-r4 .rs-val"], { opacity: 0 }, { opacity: 1, duration: 0.3 }, 6.8);
+    tl.fromTo("#rs-note", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 7.4);
+    tl.to("#root", { opacity: 0, duration: 0.4 }, 11.5);
+    window.__timelines["results"] = tl;
+  </script>
+</template>

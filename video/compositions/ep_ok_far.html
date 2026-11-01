@@ -1,0 +1,48 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; background: #14161b; font-family: "Noto Sans JP", sans-serif; color: #eceef2; }
+    #okfar-main { position: absolute; left: 0; top: 0; width: 1440px; height: 1080px; }
+    #okfar-tag { position: absolute; left: 32px; top: 28px; padding: 10px 22px; border-radius: 8px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; font-weight: 700; }
+    #okfar-tag span { color: #40ba70; }
+    #okfar-speed { position: absolute; left: 1300px; top: 34px; padding: 6px 14px; border-radius: 6px;
+      background: rgba(20, 22, 27, 0.82); font-size: 22px; font-weight: 700; }
+    #okfar-cap { position: absolute; left: 0; top: 950px; width: 1440px; height: 130px; padding: 26px 40px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; line-height: 1.45; }
+    #okfar-side { position: absolute; left: 1440px; top: 0; width: 480px; height: 1080px; background: #1c1f26; }
+    #okfar-plot-h { position: absolute; left: 1460px; top: 14px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #okfar-plot { position: absolute; left: 1440px; top: 46px; width: 480px; height: 410px; }
+    #okfar-head-h { position: absolute; left: 1460px; top: 476px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #okfar-head { position: absolute; left: 1456px; top: 510px; width: 448px; height: 448px; }
+    #okfar-info { position: absolute; left: 1460px; top: 966px; width: 440px; font-size: 21px; color: #a0a6b2; line-height: 1.45; }
+    #okfar-badge { position: absolute; left: 720px; top: 400px; transform: translateX(-50%); padding: 28px 56px 24px;
+      border-radius: 18px; background: rgba(48, 150, 88, 0.94); text-align: center; white-space: nowrap; }
+    #okfar-badge-big { font-size: 60px; font-weight: 700; color: #ffffff; }
+    #okfar-badge-small { font-size: 26px; color: #ffffff; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  </style>
+  <div data-hf-id="hf-e1kb" id="root" data-composition-id="ep_ok_far" data-width="1920" data-height="1080">
+    <video data-hf-id="hf-t01b" id="okfar-main" class="clip" data-start="0" data-duration="12.0" data-track-index="0"
+           src="assets/ok_far_main.mp4" muted playsinline></video>
+    <div data-hf-id="hf-aqwa" id="okfar-tag">評価 ・ <span data-hf-id="hf-bto2">成功例 1</span></div>
+    <div data-hf-id="hf-i46q" id="okfar-speed">等倍</div>
+    <div data-hf-id="hf-xcxe" id="okfar-cap">キューブが学習範囲の奥・右の端にある配置</div>
+    <div data-hf-id="hf-dl36" id="okfar-side"></div>
+    <div data-hf-id="hf-janm" id="okfar-plot-h">初期配置（上から見た図）</div>
+    <img data-hf-id="hf-yscr" id="okfar-plot" src="assets/placements_ok_far.png" alt="" />
+    <div data-hf-id="hf-02j5" id="okfar-head-h">頭部カメラ（方策の入力 224×224）</div>
+    <video data-hf-id="hf-nexq" id="okfar-head" class="clip" data-start="0" data-duration="12.0" data-track-index="1"
+           src="assets/ok_far_head.mp4" muted playsinline></video>
+    <div data-hf-id="hf-39ry" id="okfar-info">評価用シード 100000<br data-hf-id="hf-x5px" />キューブ (0.35, -0.23) m、+4°<br data-hf-id="hf-rsrt" />置き場所 (0.25, -0.03) m</div>
+    <div data-hf-id="hf-gnpt" id="okfar-badge" class="clip" data-start="9.0" data-duration="3.0" data-track-index="2">
+      <div data-hf-id="hf-awko" id="okfar-badge-big">成功</div>
+      <div data-hf-id="hf-ik78" id="okfar-badge-small">置き場所との距離 0.7 cm ／ 持ち上げた高さ 10.3 cm</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#okfar-cap", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 0.2);
+    tl.fromTo("#okfar-badge-big", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, 9.0);
+    tl.fromTo("#okfar-badge-small", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 9.0 + 0.15);
+    window.__timelines["ep_ok_far"] = tl;
+  </script>
+</template>

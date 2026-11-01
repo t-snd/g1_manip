@@ -1,0 +1,146 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #14161b;
+      font-family: "Noto Sans JP", sans-serif;
+      color: #eceef2;
+    }
+    .task-h {
+      position: absolute;
+      left: 100px;
+      top: 70px;
+      font-size: 52px;
+      font-weight: 700;
+    }
+    .task-lead {
+      position: absolute;
+      left: 100px;
+      top: 150px;
+      font-size: 28px;
+      color: #a0a6b2;
+    }
+    #task-still {
+      position: absolute;
+      left: 100px;
+      top: 230px;
+      width: 800px;
+      height: 600px;
+      object-fit: cover;
+      border-radius: 12px;
+    }
+    #task-still-cap {
+      position: absolute;
+      left: 100px;
+      top: 846px;
+      width: 800px;
+      font-size: 24px;
+      color: #a0a6b2;
+      line-height: 1.5;
+    }
+    .task-box {
+      position: absolute;
+      left: 980px;
+      width: 840px;
+      background: #1c1f26;
+      border-radius: 12px;
+      padding: 22px 28px;
+    }
+    .task-tag {
+      font-size: 22px;
+      font-weight: 700;
+      color: #3987e5;
+      letter-spacing: 0.06em;
+    }
+    .task-big {
+      font-size: 32px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .task-small {
+      font-size: 23px;
+      color: #a0a6b2;
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+    #task-in {
+      top: 230px;
+      height: 230px;
+    }
+    #task-head {
+      position: absolute;
+      right: 28px;
+      top: 22px;
+      width: 186px;
+      height: 186px;
+      border-radius: 8px;
+    }
+    #task-in .task-text {
+      width: 580px;
+    }
+    #task-model {
+      top: 500px;
+      height: 160px;
+    }
+    #task-out {
+      top: 700px;
+      height: 196px;
+    }
+    .task-arrow {
+      position: absolute;
+      left: 1390px;
+      width: 0;
+      height: 0;
+      border-left: 16px solid transparent;
+      border-right: 16px solid transparent;
+      border-top: 20px solid #4a4f5a;
+    }
+    #task-a1 {
+      top: 470px;
+    }
+    #task-a2 {
+      top: 670px;
+    }
+  </style>
+  <div data-hf-id="hf-9k72" id="root" data-composition-id="task" data-width="1920" data-height="1080">
+    <h2 data-hf-id="hf-zkfb" class="task-h" id="task-h">タスクと方策の入出力</h2>
+    <div data-hf-id="hf-05l0" class="task-lead" id="task-lead">机の上の赤いキューブを右手でつかみ、緑の円盤の上に置く（1 エピソード 9 秒）</div>
+    <img data-hf-id="hf-6xcl" id="task-still" src="assets/still_grasp.jpg" alt="" />
+    <div data-hf-id="hf-qc89" id="task-still-cap">Unitree G1（下半身は固定）。動かすのは右腕 7 関節と右手（Dex3）7 関節。<br data-hf-id="hf-x5px" />キューブの位置・向きと置き場所は毎回ランダム。</div>
+    <div data-hf-id="hf-z3zy" class="task-box" id="task-in">
+      <div data-hf-id="hf-4ccl" class="task-text">
+        <div data-hf-id="hf-u0no" class="task-tag">入力</div>
+        <div data-hf-id="hf-jgw3" class="task-big">頭部カメラの画像 224×224<br data-hf-id="hf-rsrt" />＋ 関節角 14</div>
+        <div data-hf-id="hf-08vv" class="task-small">キューブ・置き場所の座標は与えない。<br data-hf-id="hf-szow" />位置は画像から読み取る。</div>
+      </div>
+      <img data-hf-id="hf-w44a" id="task-head" src="assets/still_head.jpg" alt="" />
+    </div>
+    <div data-hf-id="hf-rzup" class="task-arrow" id="task-a1"></div>
+    <div data-hf-id="hf-f5yi" class="task-box" id="task-model">
+      <div data-hf-id="hf-1c4a" class="task-tag">モデル：ACT（Action Chunking with Transformers）</div>
+      <div data-hf-id="hf-p33j" class="task-big">ResNet18（画像）＋ Transformer</div>
+      <div data-hf-id="hf-6pyk" class="task-small">LeRobot 0.6.1 の実装。推論では潜在変数を 0 に固定（決定的）。</div>
+    </div>
+    <div data-hf-id="hf-vxyq" class="task-arrow" id="task-a2"></div>
+    <div data-hf-id="hf-l8i9" class="task-box" id="task-out">
+      <div data-hf-id="hf-e0dj" class="task-tag">出力</div>
+      <div data-hf-id="hf-wko0" class="task-big">関節目標角 14 × 100 ステップ（2 秒分）</div>
+      <div data-hf-id="hf-2mgf" class="task-small">まとめて予測する「行動チャンク」。50 Hz で関節の位置制御の目標として与える。</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#task-h", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.2);
+    tl.fromTo("#task-lead", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 0.6);
+    tl.fromTo("#task-still", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.7, ease: "power2.out" }, 0.9);
+    tl.fromTo("#task-still-cap", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 1.5);
+    tl.fromTo("#task-in", { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.6, ease: "power3.out" }, 3.0);
+    tl.fromTo("#task-a1", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 5.6);
+    tl.fromTo("#task-model", { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.6, ease: "power3.out" }, 5.8);
+    tl.fromTo("#task-a2", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 8.6);
+    tl.fromTo("#task-out", { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.6, ease: "power3.out" }, 8.8);
+    tl.to("#root", { opacity: 0, duration: 0.4 }, 13.5);
+    window.__timelines["task"] = tl;
+  </script>
+</template>

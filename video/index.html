@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #14161b;
+      }
+      #op,
+      #ed {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        object-fit: contain;
+        z-index: 2;
+      }
+      #bg {
+        position: absolute;
+        inset: 0;
+        background: #14161b;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 紹介動画。最初に OP（assets/op.mp4）、最後に ED（assets/ed.mp4）。各シーンは compositions/ に 1 ファイルずつ。評価のエピソード（ep_*.html）は build_episodes.py が assets/data.json から作る -->
+    <div data-hf-id="hf-9yx0" id="root" data-composition-id="main" data-start="0" data-duration="141.01" data-width="1920" data-height="1080">
+      <div data-hf-id="hf-2xc0" id="bg"></div>
+      <video id="op" class="clip" data-start="0" data-duration="3.04" data-track-index="0" src="assets/op.mp4" muted playsinline></video>
+      <div data-hf-id="hf-ut5x" id="intro" data-composition-id="intro" data-composition-src="compositions/intro.html" data-start="3.04" data-duration="6" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-4vjn" id="task" data-composition-id="task" data-composition-src="compositions/task.html" data-start="9.04" data-duration="14" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-h5rw" id="dataset" data-composition-id="dataset" data-composition-src="compositions/dataset.html" data-start="23.04" data-duration="14" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-us7g" id="training" data-composition-id="training" data-composition-src="compositions/training.html" data-start="37.04" data-duration="11" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-2ue9" id="results" data-composition-id="results" data-composition-src="compositions/results.html" data-start="48.04" data-duration="12" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-ikmd" id="evalintro" data-composition-id="evalintro" data-composition-src="compositions/evalintro.html" data-start="60.04" data-duration="6" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-f47h" id="ep_ok_far" data-composition-id="ep_ok_far" data-composition-src="compositions/ep_ok_far.html" data-start="66.04" data-duration="12" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-vwao" id="ep_ok_yaw" data-composition-id="ep_ok_yaw" data-composition-src="compositions/ep_ok_yaw.html" data-start="78.04" data-duration="12" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-0e8y" id="ep_ok_near" data-composition-id="ep_ok_near" data-composition-src="compositions/ep_ok_near.html" data-start="90.04" data-duration="12" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-axuh" id="ep_ok_ood" data-composition-id="ep_ok_ood" data-composition-src="compositions/ep_ok_ood.html" data-start="102.04" data-duration="12" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-vq0q" id="ep_ng_lift" data-composition-id="ep_ng_lift" data-composition-src="compositions/ep_ng_lift.html" data-start="114.04" data-duration="12" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-9v6v" id="ep_ng_place" data-composition-id="ep_ng_place" data-composition-src="compositions/ep_ng_place.html" data-start="126.04" data-duration="12" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <video id="ed" class="clip" data-start="138.04" data-duration="2.97" data-track-index="0" src="assets/ed.mp4" muted playsinline></video>
+    </div>
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

@@ -66,7 +66,7 @@ python -c "import mujoco, mink, lerobot"
 | `eval` | 学習済み ACT 方策をシミュレーションで動かし、成功率を出す | 7 |
 | `analyze dist / traj / grid` | ピック＆プレースの方策を学習データ・教師・最近傍リプレイと比べる | 7 |
 | `gui` | 上面図でキューブと置き場所を置いて、方策・教師・最近傍リプレイを動かす | 7・8 |
-| `showcase` | 紹介動画（教師デモ・画像入力 ACT の推論・失敗例・成功率）を作る | 提出用 |
+| `showcase` | 紹介動画（HyperFrames、`video/`）の素材（エピソードのクリップ・数値・散布図）を作る | 提出用 |
 
 学習（フェーズ6）は Colab のノートブック（`notebooks/`）で行う。
 
@@ -598,19 +598,25 @@ Colab の手順 9 で持ってきた `outputs/<RUN_NAME>/pretrained_model/` を 
 - `analyze`（学習データ・教師・リプレイとの比較）は、モデルの入力に画像があれば環境で頭部カメラを描いて渡す（eval・gui と同じ）。
   1 ステップごとに画像を描くので、状態ベースのモデルより大幅に遅い。
 
-## 紹介動画（`showcase` コマンド）
+## 紹介動画（`showcase` コマンドと HyperFrames）
+
+動画は [HyperFrames](https://hyperframes.heygen.com)（HTML を動画に書き出すツール）で組む。`video/` がそのプロジェクト。
+`showcase` コマンドは、動画に入れるエピソードを実際に動かして録画し、画面に出す数値を JSON に書き出す。
 
 ```bash
-.venv/bin/python -m g1_manip showcase                    # outputs/showcase.mp4（2 分 20 秒、1280×720、等倍）
+.venv/bin/python -m g1_manip showcase          # video/assets/ にクリップ・data.json・散布図（M1 で約 10 分）
+.venv/bin/python video/build_episodes.py       # 評価のエピソードのシーン（video/compositions/ep_*.html）を data.json から作る
+cd video && npx hyperframes render --quality delivery -o ../outputs/showcase.mp4   # 2 分 21 秒、1920×1080、30 fps
 ```
 
-- 構成：タイトル → 作ったもの → 教師デモ → 画像入力 ACT（評価と同じシード 100000〜100004、temporal ensembling）
-  → 学習範囲の外の配置（汎化の確認で試した 8 配置のうち、成功した 4 配置から 3 つ、100 ステップごとに予測）→ 失敗例（10 ステップごとに予測）→ 成功率の表。
-  区間と字幕は `g1_manip/commands/showcase.py` の `SEGMENTS`。
-- エピソードは実際に動かした結果をそのまま録り、終わりに成功・失敗の内訳を 1 秒出す。成功率の表は `eval` が保存した
-  `eval_pick_<条件>_50ep.json`（画像入力 `act_g1_pick_img_v1` と座標入力 `act_g1_pick_v1`）から読む。
-- 先に `eval` を両モデル × 3 条件（既定・`--temporal-ensemble 0.01`・`--n-action-steps 10`）で回しておく（JSON が無ければ録画の前に終了する）。
-- 字幕は macOS のヒラギノ角ゴシックで描く（無ければ終了する）。M1 で 12〜15 分かかる。
+- 構成：OP（`video/assets/op.mp4`）→ タイトル → タスクと入出力 → データセットの作り方（教師デモ）→ 学習 → 推論結果 → 評価（成功例 4・失敗例 2、すべて
+  temporal ensembling 0.01）→ ED（`video/assets/ed.mp4`）。評価の画面の右上には、学習データの初期配置（灰色）と、そのエピソードの配置を重ねた散布図を出す。
+- 録るエピソードは `g1_manip/commands/showcase.py` の `EPISODES`、字幕は `video/build_episodes.py` の `CAPTIONS`、
+  それ以外の画面は `video/compositions/*.html`。エピソードは実際に動かした結果をそのまま等倍で録り、最後の 3 秒は終わった時点の画面で止める。
+- 成功率は `eval` が保存した `eval_pick_<条件>_50ep.json` から読む（`showcase.py` の `RATE_FILES`。無ければ録画の前に終了する）。
+- 散布図の描き直しだけなら `showcase --plots-only`、一部のエピソードの録り直しは `showcase --only ok_far ng_lift`。
+- HyperFrames には Node.js 22 以上・FFmpeg・Google Chrome が要る。音は入れていない。
+- mp4 は git に入れていない（`.gitignore`）。OP・ED の mp4 は別に用意して `video/assets/` に置く。録画したクリップは `showcase` で作り直せる。
 
 ## 実行上の注意（macOS）
 

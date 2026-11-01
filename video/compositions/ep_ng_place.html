@@ -1,0 +1,48 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; background: #14161b; font-family: "Noto Sans JP", sans-serif; color: #eceef2; }
+    #ngplace-main { position: absolute; left: 0; top: 0; width: 1440px; height: 1080px; }
+    #ngplace-tag { position: absolute; left: 32px; top: 28px; padding: 10px 22px; border-radius: 8px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; font-weight: 700; }
+    #ngplace-tag span { color: #e66767; }
+    #ngplace-speed { position: absolute; left: 1300px; top: 34px; padding: 6px 14px; border-radius: 6px;
+      background: rgba(20, 22, 27, 0.82); font-size: 22px; font-weight: 700; }
+    #ngplace-cap { position: absolute; left: 0; top: 950px; width: 1440px; height: 130px; padding: 26px 40px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; line-height: 1.45; }
+    #ngplace-side { position: absolute; left: 1440px; top: 0; width: 480px; height: 1080px; background: #1c1f26; }
+    #ngplace-plot-h { position: absolute; left: 1460px; top: 14px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #ngplace-plot { position: absolute; left: 1440px; top: 46px; width: 480px; height: 410px; }
+    #ngplace-head-h { position: absolute; left: 1460px; top: 476px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #ngplace-head { position: absolute; left: 1456px; top: 510px; width: 448px; height: 448px; }
+    #ngplace-info { position: absolute; left: 1460px; top: 966px; width: 440px; font-size: 21px; color: #a0a6b2; line-height: 1.45; }
+    #ngplace-badge { position: absolute; left: 720px; top: 400px; transform: translateX(-50%); padding: 28px 56px 24px;
+      border-radius: 18px; background: rgba(200, 64, 64, 0.94); text-align: center; white-space: nowrap; }
+    #ngplace-badge-big { font-size: 60px; font-weight: 700; color: #ffffff; }
+    #ngplace-badge-small { font-size: 26px; color: #ffffff; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  </style>
+  <div data-hf-id="hf-0m0g" id="root" data-composition-id="ep_ng_place" data-width="1920" data-height="1080">
+    <video data-hf-id="hf-t34v" id="ngplace-main" class="clip" data-start="0" data-duration="12.0" data-track-index="0"
+           src="assets/ng_place_main.mp4" muted playsinline></video>
+    <div data-hf-id="hf-l5hx" id="ngplace-tag">評価 ・ <span data-hf-id="hf-v6zo">失敗例 2</span></div>
+    <div data-hf-id="hf-i16x" id="ngplace-speed">等倍</div>
+    <div data-hf-id="hf-22bk" id="ngplace-cap">置き場所まで運んだが、手を離した後にキューブが動き、6.4 cm ずれた（置き位置のずれは 50 配置中 2 件）</div>
+    <div data-hf-id="hf-i1kf" id="ngplace-side"></div>
+    <div data-hf-id="hf-60bf" id="ngplace-plot-h">初期配置（上から見た図）</div>
+    <img data-hf-id="hf-l36d" id="ngplace-plot" src="assets/placements_ng_place.png" alt="" />
+    <div data-hf-id="hf-7jl0" id="ngplace-head-h">頭部カメラ（方策の入力 224×224）</div>
+    <video data-hf-id="hf-th1y" id="ngplace-head" class="clip" data-start="0" data-duration="12.0" data-track-index="1"
+           src="assets/ng_place_head.mp4" muted playsinline></video>
+    <div data-hf-id="hf-qyc3" id="ngplace-info">評価用シード 100015<br data-hf-id="hf-x5px" />キューブ (0.30, -0.21) m、-16°<br data-hf-id="hf-rsrt" />置き場所 (0.24, 0.03) m</div>
+    <div data-hf-id="hf-jnca" id="ngplace-badge" class="clip" data-start="9.0" data-duration="3.0" data-track-index="2">
+      <div data-hf-id="hf-ddhm" id="ngplace-badge-big">失敗：置き位置のずれ</div>
+      <div data-hf-id="hf-vx6r" id="ngplace-badge-small">置き場所との距離 6.4 cm ／ 持ち上げた高さ 9.6 cm</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#ngplace-cap", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 0.2);
+    tl.fromTo("#ngplace-badge-big", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, 9.0);
+    tl.fromTo("#ngplace-badge-small", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 9.0 + 0.15);
+    window.__timelines["ep_ng_place"] = tl;
+  </script>
+</template>

@@ -1,0 +1,158 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #14161b;
+      font-family: "Noto Sans JP", sans-serif;
+      color: #eceef2;
+    }
+    #tr-h {
+      position: absolute;
+      left: 100px;
+      top: 60px;
+      font-size: 52px;
+      font-weight: 700;
+    }
+    #tr-conf {
+      position: absolute;
+      left: 100px;
+      top: 180px;
+      width: 700px;
+    }
+    .tr-row {
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 2px solid #262a33;
+      padding: 18px 4px;
+      font-size: 27px;
+    }
+    .tr-k {
+      color: #a0a6b2;
+    }
+    .tr-v {
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    #tr-chart-h {
+      position: absolute;
+      left: 960px;
+      top: 180px;
+      font-size: 32px;
+      font-weight: 700;
+    }
+    #tr-chart-sub {
+      position: absolute;
+      left: 960px;
+      top: 232px;
+      font-size: 22px;
+      color: #a0a6b2;
+    }
+    .tr-group {
+      position: absolute;
+      left: 960px;
+      width: 860px;
+    }
+    #tr-g1 {
+      top: 320px;
+    }
+    #tr-g2 {
+      top: 600px;
+    }
+    .tr-gname {
+      font-size: 25px;
+      font-weight: 700;
+      margin-bottom: 14px;
+    }
+    .tr-bar-row {
+      display: flex;
+      align-items: center;
+      height: 64px;
+      gap: 16px;
+    }
+    .tr-blabel {
+      width: 170px;
+      font-size: 22px;
+      color: #a0a6b2;
+      text-align: right;
+    }
+    .tr-track {
+      width: 560px;
+      height: 40px;
+      position: relative;
+    }
+    .tr-bar {
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 40px;
+      border-radius: 0 4px 4px 0;
+      transform-origin: left center;
+    }
+    .tr-old {
+      background: #5d6370;
+    }
+    .tr-new {
+      background: #3987e5;
+    }
+    .tr-val {
+      font-size: 26px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      width: 140px;
+    }
+  </style>
+  <div data-hf-id="hf-gvw1" id="root" data-composition-id="training" data-width="1920" data-height="1080">
+    <h2 data-hf-id="hf-3pkx" id="tr-h">学習</h2>
+    <div data-hf-id="hf-cx5y" id="tr-conf">
+      <div data-hf-id="hf-bqup" class="tr-row"><span data-hf-id="hf-i1wy" class="tr-k">環境</span><span data-hf-id="hf-wac1" class="tr-v">Google Colab（T4 GPU）</span></div>
+      <div data-hf-id="hf-ddwl" class="tr-row"><span data-hf-id="hf-5smq" class="tr-k">ステップ数</span><span data-hf-id="hf-8tnf" class="tr-v">50,000</span></div>
+      <div data-hf-id="hf-ekto" class="tr-row"><span data-hf-id="hf-33dq" class="tr-k">バッチサイズ</span><span data-hf-id="hf-9v4g" class="tr-v">64</span></div>
+      <div data-hf-id="hf-e6in" class="tr-row"><span data-hf-id="hf-xcb0" class="tr-k">学習率</span><span data-hf-id="hf-qc02" class="tr-v">1e-5</span></div>
+      <div data-hf-id="hf-fdfq" class="tr-row"><span data-hf-id="hf-6ajq" class="tr-k">行動チャンク</span><span data-hf-id="hf-5s81" class="tr-v">100 ステップ（2 秒）</span></div>
+      <div data-hf-id="hf-ez4p" class="tr-row"><span data-hf-id="hf-9pa7" class="tr-k">画像の特徴抽出</span><span data-hf-id="hf-9zbh" class="tr-v">ResNet18（ImageNet 事前学習）</span></div>
+      <div data-hf-id="hf-g61s" class="tr-row"><span data-hf-id="hf-tm5u" class="tr-k">その他</span><span data-hf-id="hf-huor" class="tr-v">ACT の既定値（CVAE、KL 重み 10）</span></div>
+    </div>
+    <div data-hf-id="hf-wg0u" id="tr-chart-h">学習が進むと成功率が上がる</div>
+    <div data-hf-id="hf-798v" id="tr-chart-sub">学習に使っていない 50 配置での成功数（同じ 50 配置）</div>
+    <div data-hf-id="hf-up91" class="tr-group" id="tr-g1">
+      <div data-hf-id="hf-dnay" class="tr-gname">temporal ensembling（毎ステップ予測して平均）</div>
+      <div data-hf-id="hf-be8p" class="tr-bar-row">
+        <div data-hf-id="hf-5owq" class="tr-blabel">1 万ステップ</div>
+        <div data-hf-id="hf-sv6s" class="tr-track"><div data-hf-id="hf-wk2f" class="tr-bar tr-old" id="tr-b1" style="width: 470.4px"></div></div>
+        <div data-hf-id="hf-s3qu" class="tr-val">42/50</div>
+      </div>
+      <div data-hf-id="hf-74q5" class="tr-bar-row">
+        <div data-hf-id="hf-ja0m" class="tr-blabel">5 万ステップ</div>
+        <div data-hf-id="hf-v5b0" class="tr-track"><div data-hf-id="hf-zjuz" class="tr-bar tr-new" id="tr-b2" style="width: 526.4px"></div></div>
+        <div data-hf-id="hf-jg6j" class="tr-val">47/50</div>
+      </div>
+    </div>
+    <div data-hf-id="hf-ynd2" class="tr-group" id="tr-g2">
+      <div data-hf-id="hf-qcij" class="tr-gname">100 ステップごとに予測（チャンクを最後まで実行）</div>
+      <div data-hf-id="hf-8bn8" class="tr-bar-row">
+        <div data-hf-id="hf-d75q" class="tr-blabel">1 万ステップ</div>
+        <div data-hf-id="hf-tydx" class="tr-track"><div data-hf-id="hf-2zf5" class="tr-bar tr-old" id="tr-b3" style="width: 302.4px"></div></div>
+        <div data-hf-id="hf-tfl1" class="tr-val">27/50</div>
+      </div>
+      <div data-hf-id="hf-7xc7" class="tr-bar-row">
+        <div data-hf-id="hf-yx96" class="tr-blabel">5 万ステップ</div>
+        <div data-hf-id="hf-ucoy" class="tr-track"><div data-hf-id="hf-nycr" class="tr-bar tr-new" id="tr-b4" style="width: 504px"></div></div>
+        <div data-hf-id="hf-dcet" class="tr-val">45/50</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#tr-h", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.2);
+    tl.fromTo("#tr-conf .tr-row", { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.4, stagger: 0.25, ease: "power3.out" }, 0.6);
+    tl.fromTo(["#tr-chart-h", "#tr-chart-sub"], { opacity: 0 }, { opacity: 1, duration: 0.5 }, 3.2);
+    tl.fromTo(["#tr-g1 .tr-gname", "#tr-g2 .tr-gname", "#tr-g1 .tr-blabel", "#tr-g2 .tr-blabel"], { opacity: 0 }, { opacity: 1, duration: 0.4 }, 3.6);
+    tl.fromTo(["#tr-b1", "#tr-b3"], { scaleX: 0 }, { scaleX: 1, duration: 0.8, ease: "power2.out" }, 4.2);
+    tl.fromTo(["#tr-g1 .tr-bar-row:nth-of-type(2) .tr-val", "#tr-g2 .tr-bar-row:nth-of-type(2) .tr-val"], { opacity: 0 }, { opacity: 1, duration: 0.3 }, 4.9);
+    tl.fromTo(["#tr-b2", "#tr-b4"], { scaleX: 0 }, { scaleX: 1, duration: 0.8, ease: "power2.out" }, 6.0);
+    tl.fromTo(["#tr-g1 .tr-bar-row:nth-of-type(3) .tr-val", "#tr-g2 .tr-bar-row:nth-of-type(3) .tr-val"], { opacity: 0 }, { opacity: 1, duration: 0.3 }, 6.7);
+    tl.to("#root", { opacity: 0, duration: 0.4 }, 10.5);
+    window.__timelines["training"] = tl;
+  </script>
+</template>

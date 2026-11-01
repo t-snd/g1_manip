@@ -1,0 +1,48 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; background: #14161b; font-family: "Noto Sans JP", sans-serif; color: #eceef2; }
+    #okood-main { position: absolute; left: 0; top: 0; width: 1440px; height: 1080px; }
+    #okood-tag { position: absolute; left: 32px; top: 28px; padding: 10px 22px; border-radius: 8px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; font-weight: 700; }
+    #okood-tag span { color: #40ba70; }
+    #okood-speed { position: absolute; left: 1300px; top: 34px; padding: 6px 14px; border-radius: 6px;
+      background: rgba(20, 22, 27, 0.82); font-size: 22px; font-weight: 700; }
+    #okood-cap { position: absolute; left: 0; top: 950px; width: 1440px; height: 130px; padding: 26px 40px;
+      background: rgba(20, 22, 27, 0.82); font-size: 30px; line-height: 1.45; }
+    #okood-side { position: absolute; left: 1440px; top: 0; width: 480px; height: 1080px; background: #1c1f26; }
+    #okood-plot-h { position: absolute; left: 1460px; top: 14px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #okood-plot { position: absolute; left: 1440px; top: 46px; width: 480px; height: 410px; }
+    #okood-head-h { position: absolute; left: 1460px; top: 476px; font-size: 22px; font-weight: 700; color: #a0a6b2; }
+    #okood-head { position: absolute; left: 1456px; top: 510px; width: 448px; height: 448px; }
+    #okood-info { position: absolute; left: 1460px; top: 966px; width: 440px; font-size: 21px; color: #a0a6b2; line-height: 1.45; }
+    #okood-badge { position: absolute; left: 720px; top: 400px; transform: translateX(-50%); padding: 28px 56px 24px;
+      border-radius: 18px; background: rgba(48, 150, 88, 0.94); text-align: center; white-space: nowrap; }
+    #okood-badge-big { font-size: 60px; font-weight: 700; color: #ffffff; }
+    #okood-badge-small { font-size: 26px; color: #ffffff; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  </style>
+  <div data-hf-id="hf-et9c" id="root" data-composition-id="ep_ok_ood" data-width="1920" data-height="1080">
+    <video data-hf-id="hf-x34h" id="okood-main" class="clip" data-start="0" data-duration="12.0" data-track-index="0"
+           src="assets/ok_ood_main.mp4" muted playsinline></video>
+    <div data-hf-id="hf-qhmj" id="okood-tag">評価 ・ <span data-hf-id="hf-1c94">成功例 4（学習範囲の外）</span></div>
+    <div data-hf-id="hf-wfcr" id="okood-speed">等倍</div>
+    <div data-hf-id="hf-hlsg" id="okood-cap">キューブを学習範囲より 3 cm 手前（x = 0.19 m）に置いた配置。範囲の外は方向によって失敗することもある</div>
+    <div data-hf-id="hf-17hx" id="okood-side"></div>
+    <div data-hf-id="hf-xgsl" id="okood-plot-h">初期配置（上から見た図）</div>
+    <img data-hf-id="hf-f6hf" id="okood-plot" src="assets/placements_ok_ood.png" alt="" />
+    <div data-hf-id="hf-0yru" id="okood-head-h">頭部カメラ（方策の入力 224×224）</div>
+    <video data-hf-id="hf-yv38" id="okood-head" class="clip" data-start="0" data-duration="12.0" data-track-index="1"
+           src="assets/ok_ood_head.mp4" muted playsinline></video>
+    <div data-hf-id="hf-nisb" id="okood-info">配置を指定（シードでは決めていない）<br data-hf-id="hf-x5px" />キューブ (0.19, -0.15) m、+0°<br data-hf-id="hf-rsrt" />置き場所 (0.30, 0.00) m</div>
+    <div data-hf-id="hf-lce8" id="okood-badge" class="clip" data-start="9.0" data-duration="3.0" data-track-index="2">
+      <div data-hf-id="hf-md9x" id="okood-badge-big">成功</div>
+      <div data-hf-id="hf-cts5" id="okood-badge-small">置き場所との距離 1.6 cm ／ 持ち上げた高さ 10.1 cm</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#okood-cap", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 0.2);
+    tl.fromTo("#okood-badge-big", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, 9.0);
+    tl.fromTo("#okood-badge-small", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 9.0 + 0.15);
+    window.__timelines["ep_ok_ood"] = tl;
+  </script>
+</template>

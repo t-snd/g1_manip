@@ -7,3 +7,10 @@ third_party
 outputs
 *.mp4
 MUJOCO_LOG.TXT
+.agents/
+video/.hyperframes/
+video/renders/
+skills-lock.json
+agent/
+docs/report/REPORT.pdf
+video/.thumbnails/

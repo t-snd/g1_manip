@@ -1,0 +1,145 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #14161b;
+      font-family: "Noto Sans JP", sans-serif;
+      color: #eceef2;
+    }
+    #ds-h {
+      position: absolute;
+      left: 100px;
+      top: 60px;
+      font-size: 52px;
+      font-weight: 700;
+    }
+    #ds-video {
+      position: absolute;
+      left: 100px;
+      top: 160px;
+      width: 960px;
+      height: 720px;
+      border-radius: 12px;
+      object-fit: cover;
+    }
+    #ds-vcap {
+      position: absolute;
+      left: 100px;
+      top: 896px;
+      width: 960px;
+      font-size: 24px;
+      color: #a0a6b2;
+      line-height: 1.5;
+    }
+    .ds-step {
+      position: absolute;
+      left: 1120px;
+      width: 720px;
+      display: flex;
+      gap: 18px;
+    }
+    .ds-num {
+      flex: none;
+      width: 44px;
+      height: 44px;
+      border-radius: 22px;
+      background: #3987e5;
+      color: #14161b;
+      font-size: 24px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .ds-head {
+      font-size: 29px;
+      font-weight: 700;
+    }
+    .ds-body {
+      font-size: 22px;
+      color: #a0a6b2;
+      margin-top: 4px;
+      line-height: 1.45;
+    }
+    #ds-s1 {
+      top: 170px;
+    }
+    #ds-s2 {
+      top: 320px;
+    }
+    #ds-s3 {
+      top: 470px;
+    }
+    #ds-s4 {
+      top: 620px;
+    }
+    #ds-total {
+      position: absolute;
+      left: 1120px;
+      top: 800px;
+      width: 720px;
+      background: #1c1f26;
+      border-radius: 12px;
+      padding: 22px 28px;
+    }
+    #ds-total-big {
+      font-size: 40px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    #ds-total-small {
+      font-size: 22px;
+      color: #a0a6b2;
+      margin-top: 4px;
+    }
+  </style>
+  <div data-hf-id="hf-s41h" id="root" data-composition-id="dataset" data-width="1920" data-height="1080">
+    <h2 data-hf-id="hf-9hd5" id="ds-h">データセットの作り方</h2>
+    <video data-hf-id="hf-uyol" id="ds-video" class="clip" data-start="1.2" data-duration="10.5" data-track-index="0" src="assets/teacher_main.mp4" muted playsinline></video>
+    <div data-hf-id="hf-m4cn" id="ds-vcap">教師（スクリプト方策）が動かした 1 本（学習データのエピソード 0、等倍）。<br data-hf-id="hf-x5px" />キューブの真の位置から IK で経路を解くので、人の操作は要らない。</div>
+    <div data-hf-id="hf-26u4" class="ds-step" id="ds-s1">
+      <div data-hf-id="hf-of6j" class="ds-num">1</div>
+      <div data-hf-id="hf-yeow">
+        <div data-hf-id="hf-iheo" class="ds-head">配置をランダムに決める</div>
+        <div data-hf-id="hf-fc8z" class="ds-body">キューブ：x 0.22〜0.38 m、y −0.23〜−0.07 m、向き ±30°<br data-hf-id="hf-rsrt" />置き場所：x 0.22〜0.38 m、y −0.05〜+0.05 m</div>
+      </div>
+    </div>
+    <div data-hf-id="hf-aupz" class="ds-step" id="ds-s2">
+      <div data-hf-id="hf-o0vi" class="ds-num">2</div>
+      <div data-hf-id="hf-y7yw">
+        <div data-hf-id="hf-016a" class="ds-head">mink の IK で手先の経路を解いて実行</div>
+        <div data-hf-id="hf-jvqv" class="ds-body">横から差し込んで親指と中指で挟む（接触の物理で把持）。<br data-hf-id="hf-szow" />上へ移る → 下ろす → 差し込む → 閉じる → 運ぶ → 置く</div>
+      </div>
+    </div>
+    <div data-hf-id="hf-6wly" class="ds-step" id="ds-s3">
+      <div data-hf-id="hf-nmkh" class="ds-num">3</div>
+      <div data-hf-id="hf-x11t">
+        <div data-hf-id="hf-kwf6" class="ds-head">成功したデモだけを保存</div>
+        <div data-hf-id="hf-nc5u" class="ds-body">201 回試して 200 回成功。関節角と関節目標角を 50 Hz で記録</div>
+      </div>
+    </div>
+    <div data-hf-id="hf-fkht" class="ds-step" id="ds-s4">
+      <div data-hf-id="hf-n89g" class="ds-num">4</div>
+      <div data-hf-id="hf-xfcu">
+        <div data-hf-id="hf-wb3b" class="ds-head">同じ初期状態から再生し、頭部カメラの画像を付ける</div>
+        <div data-hf-id="hf-mns6" class="ds-body">画像（224×224）＋ 関節角 14 → 関節目標角 14。<br data-hf-id="hf-sldv" />座標は入れない。LeRobot 形式で Hugging Face Hub へ</div>
+      </div>
+    </div>
+    <div data-hf-id="hf-ybvf" id="ds-total">
+      <div data-hf-id="hf-3t7v" id="ds-total-big">200 本 ／ 90,000 フレーム</div>
+      <div data-hf-id="hf-tuun" id="ds-total-small">1 本 9 秒（450 ステップ）× 200 本</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#ds-h", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.2);
+    tl.fromTo("#ds-vcap", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 1.2);
+    ["#ds-s1", "#ds-s2", "#ds-s3", "#ds-s4"].forEach((id, i) => {
+      tl.fromTo(id, { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 1.6 + i * 2.2);
+    });
+    tl.fromTo("#ds-total", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 10.6);
+    tl.to("#root", { opacity: 0, duration: 0.4 }, 13.5);
+    window.__timelines["dataset"] = tl;
+  </script>
+</template>
